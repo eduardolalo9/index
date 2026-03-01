@@ -370,6 +370,27 @@
 
         function initializeApp() {
             loadFromLocalStorage();
+
+            // ── Persistencia robusta: guardar antes de cerrar/recargar ──
+            window.addEventListener('beforeunload', () => saveToLocalStorage());
+            // Autosave cada 30 segundos por si el navegador falla
+            setInterval(() => saveToLocalStorage(), 30000);
+
+            // ── Indicador de estado offline/online ──
+            function updateNetworkStatus() {
+                const existing = document.getElementById('networkStatus');
+                if (existing) existing.remove();
+                if (!navigator.onLine) {
+                    const bar = document.createElement('div');
+                    bar.id = 'networkStatus';
+                    bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#f59e0b;color:#fff;text-align:center;padding:6px;font-size:13px;font-weight:600;z-index:9999;';
+                    bar.textContent = '⚠️ Sin conexión — los datos están guardados localmente';
+                    document.body.appendChild(bar);
+                }
+            }
+            window.addEventListener('online',  updateNetworkStatus);
+            window.addEventListener('offline', updateNetworkStatus);
+            updateNetworkStatus();
             
             // Si no hay productos guardados, usar los iniciales
             if (products.length === 0) {
@@ -672,7 +693,7 @@
             html += '<button onclick="resetAllInventario()" class="bg-gradient-to-r from-red-500 to-orange-500 text-white px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-base rounded-lg sm:rounded-xl font-medium hover:shadow-lg transition-all transform active:scale-95 whitespace-nowrap flex items-center gap-1 sm:gap-2"><svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg><span>Nuevo</span></button>';
             html += '<button onclick="document.getElementById(\'fileInput\').click()" class="border-2 border-purple-500 text-purple-600 px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-base rounded-lg sm:rounded-xl flex items-center gap-1 sm:gap-2 hover:bg-purple-50 transition-all font-medium whitespace-nowrap"><svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg><span class="hidden sm:inline">Importar</span></button>';
             html += '<button onclick="saveInventorySnapshot()" class="bg-gradient-to-r from-purple-500 to-blue-500 text-white px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-base rounded-lg sm:rounded-xl font-medium hover:shadow-lg transition-all transform active:scale-95 whitespace-nowrap">Guardar</button>';
-            html += '<button onclick="exportToExcel()" class="border-2 border-blue-500 text-blue-600 px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-base rounded-lg sm:rounded-xl flex items-center gap-1 sm:gap-2 hover:bg-blue-50 transition-all font-medium whitespace-nowrap"><svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg><span class="hidden sm:inline">Exportar</span></button>';
+            html += '<button onclick="exportToExcel()" class="border-2 border-green-600 text-green-700 px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-base rounded-lg sm:rounded-xl flex items-center gap-1 sm:gap-2 hover:bg-green-50 transition-all font-medium whitespace-nowrap"><svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg><span class="hidden sm:inline">Exportar Excel</span><span class="sm:hidden">Excel</span></button>';
             html += '</div></div>';
             
             html += '<div class="flex flex-wrap gap-2 mb-3 sm:mb-4">';
@@ -1319,53 +1340,250 @@
         }
 
         function exportToExcel() {
-            const areaKeys = ['almacen', 'barra1', 'barra2'];
+            const areaKeys  = ['almacen', 'barra1', 'barra2'];
             const areaNames = { almacen: 'Almacén', barra1: 'Barra 1', barra2: 'Barra 2' };
+            const areaColor = { almacen: '7C3AED', barra1: '2563EB', barra2: 'EA580C' };
 
-            // Calcular máximo de botellas abiertas por área para construir headers dinámicos
+            // ── 1. Máximo de botellas abiertas por área ──
             const maxAbiertas = { almacen: 1, barra1: 1, barra2: 1 };
             products.forEach(p => {
                 areaKeys.forEach(area => {
                     const d = inventarioConteo[p.id] && inventarioConteo[p.id][area];
-                    if (d && d.abiertas) maxAbiertas[area] = Math.max(maxAbiertas[area], d.abiertas.length);
+                    if (d && d.abiertas && d.abiertas.length > maxAbiertas[area]) {
+                        maxAbiertas[area] = d.abiertas.length;
+                    }
                 });
             });
 
-            // Construir headers
-            const headers = ['Producto', 'Grupo', 'Unidad'];
+            // ── 2. Construir cabecera ──
+            // Columnas fijas: ID(0), Producto(1), Unidad(2), Grupo(3)
+            // Luego columnas de área, y al final: Total(última)
+            const FIXED_COLS = 4; // ID, Producto, Unidad, Grupo
+            const headerRow = ['ID', 'Producto', 'Unidad', 'Grupo'];
+            // colMeta[i]: null = columna fija, { area, tipo } = columna numérica de área, 'total' = total
+            const colMeta = [null, null, null, null];
+
             areaKeys.forEach(area => {
-                headers.push(areaNames[area] + ' – Bot. Entera');
+                colMeta.push({ area, tipo: 'entera' });
+                headerRow.push(areaNames[area] + ' – Bot. Entera');
                 for (let i = 1; i <= maxAbiertas[area]; i++) {
-                    headers.push(areaNames[area] + ' – Bot. Abierta ' + i);
+                    colMeta.push({ area, tipo: 'abierta' });
+                    headerRow.push(areaNames[area] + ' – Bot. Abierta ' + i);
+                }
+            });
+            // Columna Total al final
+            colMeta.push('total');
+            headerRow.push('TOTAL');
+
+            const totalCols = headerRow.length;
+            const TOTAL_COL = totalCols - 1; // índice de la columna Total
+
+            // ── 3. Función auxiliar: obtener valores numéricos de un producto ──
+            function getNumericValues(p) {
+                // Devuelve array de valores numéricos paralelos a colMeta (solo los de área + total)
+                const nums = [];
+                areaKeys.forEach(area => {
+                    const d = (inventarioConteo[p.id] && inventarioConteo[p.id][area]) || { enteras: 0, abiertas: [] };
+                    nums.push(d.enteras !== undefined ? (d.enteras || 0) : 0);
+                    for (let i = 0; i < maxAbiertas[area]; i++) {
+                        nums.push((d.abiertas && d.abiertas[i] !== undefined) ? d.abiertas[i] : 0);
+                    }
+                });
+                return nums;
+            }
+
+            // ── 4. Agrupar productos y construir filas con subtotales ──
+            // Ordenar por grupo
+            const sorted = [...products].sort((a, b) => (a.group || '').localeCompare(b.group || ''));
+            const groups = [...new Set(sorted.map(p => p.group || 'General'))];
+
+            // wsRows: cada elemento es { data: [...], type: 'data'|'subtotal'|'grandtotal', even: bool }
+            const wsRows = [];
+            // acumuladores para gran total
+            const grandTotNums = Array(totalCols - FIXED_COLS - 1).fill(0); // excl. Grupo y Total
+            let grandTotTotal = 0;
+
+            groups.forEach(group => {
+                const groupProducts = sorted.filter(p => (p.group || 'General') === group);
+                const groupNums = Array(totalCols - FIXED_COLS - 1).fill(0);
+                let groupTotal = 0;
+                let evenCount = 0;
+
+                groupProducts.forEach(p => {
+                    const nums = getNumericValues(p);
+                    const rowTotal = nums.reduce((s, v) => s + v, 0);
+                    wsRows.push({
+                        type: 'data',
+                        even: evenCount % 2 === 0,
+                        data: [p.id, p.name, p.unit, p.group || 'General', ...nums, rowTotal]
+                    });
+                    nums.forEach((v, i) => { groupNums[i] += v; });
+                    groupTotal += rowTotal;
+                    grandTotNums.forEach((_, i) => { grandTotNums[i] += nums[i] || 0; });
+                    grandTotTotal += rowTotal;
+                    evenCount++;
+                });
+
+                // Fila de subtotal por grupo
+                wsRows.push({
+                    type: 'subtotal',
+                    data: ['', 'Subtotal – ' + group, '', '', ...groupNums, groupTotal]
+                });
+            });
+
+            // Fila de gran total
+            wsRows.push({
+                type: 'grandtotal',
+                data: ['', 'GRAN TOTAL', '', '', ...grandTotNums, grandTotTotal]
+            });
+
+            // ── 5. Crear workbook / worksheet ──
+            const wb = XLSX.utils.book_new();
+            const allRows = [headerRow, ...wsRows.map(r => r.data)];
+            const ws = XLSX.utils.aoa_to_sheet(allRows);
+
+            // ── 6. Anchos de columna ──
+            ws['!cols'] = colMeta.map((m, i) => {
+                if (i === 0) return { wch: 10 };   // ID
+                if (i === 1) return { wch: 32 };   // Producto
+                if (i === 2) return { wch: 12 };   // Unidad
+                if (i === 3) return { wch: 16 };   // Grupo
+                if (i === TOTAL_COL) return { wch: 14 }; // Total
+                return { wch: 22 };
+            });
+
+            // ── 7. Estilos de cabecera (fila 0) ──
+            const fixedHdrStyle = {
+                font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
+                fill: { fgColor: { rgb: '374151' } },
+                alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+                border: { bottom: { style: 'medium', color: { rgb: 'FFFFFF' } } }
+            };
+            // Estilo especial para col Grupo
+            const grupoHdrStyle = { ...fixedHdrStyle, fill: { fgColor: { rgb: '6B7280' } } };
+            // Estilo especial para col Total
+            const totalHdrStyle = { ...fixedHdrStyle, fill: { fgColor: { rgb: '065F46' } } };
+
+            for (let ci = 0; ci < totalCols; ci++) {
+                const ref = XLSX.utils.encode_cell({ r: 0, c: ci });
+                if (!ws[ref]) continue;
+                if (ci === 3) { ws[ref].s = grupoHdrStyle; continue; }
+                if (ci === TOTAL_COL) { ws[ref].s = totalHdrStyle; continue; }
+                if (ci < FIXED_COLS) { ws[ref].s = fixedHdrStyle; continue; }
+                // Cabeceras de área
+                const meta = colMeta[ci];
+                ws[ref].s = {
+                    font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
+                    fill: { fgColor: { rgb: areaColor[meta.area] } },
+                    alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+                    border: {
+                        left:   { style: 'thin',   color: { rgb: 'FFFFFF' } },
+                        right:  { style: 'thin',   color: { rgb: 'FFFFFF' } },
+                        bottom: { style: 'medium', color: { rgb: 'FFFFFF' } }
+                    }
+                };
+            }
+
+            // ── 8. Estilos de filas de datos / subtotal / gran total ──
+            const rowHeights = [{ hpt: 40 }]; // cabecera
+
+            wsRows.forEach((wsRow, ri) => {
+                const rowIdx = ri + 1; // fila Excel (0-based: 0 es cabecera)
+
+                if (wsRow.type === 'subtotal') {
+                    rowHeights.push({ hpt: 22 });
+                    for (let ci = 0; ci < totalCols; ci++) {
+                        const ref = XLSX.utils.encode_cell({ r: rowIdx, c: ci });
+                        const val = wsRow.data[ci];
+                        if (!ws[ref]) { // crear celda vacía con estilo
+                            ws[ref] = { t: ci >= FIXED_COLS ? 'n' : 's', v: ci >= FIXED_COLS ? 0 : '' };
+                        }
+                        ws[ref].s = {
+                            font: { bold: true, color: { rgb: '1E1B4B' }, sz: 10, italic: true },
+                            fill: { fgColor: { rgb: 'DDD6FE' } }, // lavanda medio
+                            alignment: { horizontal: ci >= FIXED_COLS ? 'center' : 'left', vertical: 'center' },
+                            border: {
+                                top:    { style: 'thin',  color: { rgb: '7C3AED' } },
+                                bottom: { style: 'thin',  color: { rgb: '7C3AED' } },
+                                left:   { style: 'hair',  color: { rgb: 'A78BFA' } },
+                                right:  { style: 'hair',  color: { rgb: 'A78BFA' } }
+                            }
+                        };
+                        if (ci >= FIXED_COLS) {
+                            ws[ref].t = 'n';
+                            ws[ref].v = typeof val === 'number' ? val : 0;
+                            ws[ref].z = '0.##';
+                        }
+                    }
+                    return;
+                }
+
+                if (wsRow.type === 'grandtotal') {
+                    rowHeights.push({ hpt: 26 });
+                    for (let ci = 0; ci < totalCols; ci++) {
+                        const ref = XLSX.utils.encode_cell({ r: rowIdx, c: ci });
+                        const val = wsRow.data[ci];
+                        if (!ws[ref]) {
+                            ws[ref] = { t: ci >= FIXED_COLS ? 'n' : 's', v: ci >= FIXED_COLS ? 0 : '' };
+                        }
+                        ws[ref].s = {
+                            font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 12 },
+                            fill: { fgColor: { rgb: '065F46' } }, // verde oscuro
+                            alignment: { horizontal: ci >= FIXED_COLS ? 'center' : 'left', vertical: 'center' },
+                            border: {
+                                top:    { style: 'medium', color: { rgb: '064E3B' } },
+                                bottom: { style: 'medium', color: { rgb: '064E3B' } },
+                                left:   { style: 'medium', color: { rgb: '064E3B' } },
+                                right:  { style: 'medium', color: { rgb: '064E3B' } }
+                            }
+                        };
+                        if (ci >= FIXED_COLS) {
+                            ws[ref].t = 'n';
+                            ws[ref].v = typeof val === 'number' ? val : 0;
+                            ws[ref].z = '0.##';
+                        }
+                    }
+                    return;
+                }
+
+                // Fila de datos normal
+                rowHeights.push({ hpt: 20 });
+                const even = wsRow.even;
+                for (let ci = 0; ci < totalCols; ci++) {
+                    const ref = XLSX.utils.encode_cell({ r: rowIdx, c: ci });
+                    if (!ws[ref]) continue;
+                    const meta = colMeta[ci];
+                    let bgRgb;
+                    if (ci === TOTAL_COL)                       bgRgb = even ? 'D1FAE5' : 'ECFDF5'; // verde claro
+                    else if (meta && meta.tipo === 'abierta')   bgRgb = even ? 'FFF7ED' : 'FEF3C7'; // naranja suave
+                    else if (meta && meta.tipo === 'entera')    bgRgb = even ? 'EDE9FE' : 'F5F3FF'; // lavanda suave
+                    else                                         bgRgb = even ? 'F9FAFB' : 'FFFFFF'; // gris muy claro
+
+                    ws[ref].s = {
+                        fill: { fgColor: { rgb: bgRgb } },
+                        alignment: { horizontal: ci >= FIXED_COLS ? 'center' : 'left', vertical: 'center' },
+                        border: {
+                            top:    { style: 'hair', color: { rgb: 'E5E7EB' } },
+                            bottom: { style: 'hair', color: { rgb: 'E5E7EB' } },
+                            left:   { style: 'hair', color: { rgb: 'E5E7EB' } },
+                            right:  { style: 'hair', color: { rgb: 'E5E7EB' } }
+                        }
+                    };
+                    if (ci >= FIXED_COLS) {
+                        ws[ref].t = 'n';
+                        ws[ref].z = '0.##';
+                    }
                 }
             });
 
-            // Construir filas
-            const rows = products.map(p => {
-                const row = [p.name, p.group, p.unit];
-                areaKeys.forEach(area => {
-                    const d = (inventarioConteo[p.id] && inventarioConteo[p.id][area]) || { enteras: 0, abiertas: [] };
-                    row.push(d.enteras || 0);
-                    for (let i = 0; i < maxAbiertas[area]; i++) {
-                        row.push((d.abiertas && d.abiertas[i] !== undefined) ? d.abiertas[i] : 0);
-                    }
-                });
-                return row;
-            });
+            ws['!rows'] = rowHeights;
+            ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: wsRows.length, c: totalCols - 1 } });
 
-            const csv = [headers].concat(rows).map(row =>
-                row.map(cell => '"' + String(cell).replace(/"/g, '""') + '"').join(',')
-            ).join('\n');
-
-            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'inventario_' + new Date().toISOString().split('T')[0] + '.csv';
-            a.click();
-            // FIX 8: liberar la URL de objeto para evitar memory leak
-            setTimeout(() => window.URL.revokeObjectURL(url), 1000);
-            showNotification('Datos exportados con desglose por área');
+            // ── 9. Exportar ──
+            XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+            const fileName = 'inventario_' + new Date().toISOString().split('T')[0] + '.xlsx';
+            XLSX.writeFile(wb, fileName);
+            showNotification('✅ Excel exportado con grupos y totales');
         }
 
         document.getElementById('fileInput').addEventListener('change', handleFileImport);
@@ -1374,3 +1592,4 @@
     </script>
 </body>
 </html>
+
