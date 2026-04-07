@@ -1,9 +1,30 @@
 /**
- * js/auth.js — v2.2 (CORREGIDO)
+ * js/auth.js — v2.3 (CORREGIDO)
  * ══════════════════════════════════════════════════════════════
  * Autenticación Firebase Email/Password con control de roles.
  *
- * CORRECCIONES v2.2:
+ * CORRECCIONES v2.3:
+ * ──────────────────────────────────────────────────────────────
+ * BUG CRÍTICO (app nunca arrancaba):
+ *
+ *   _handleLogin() recreaba _authReady con una NUEVA Promise (P2)
+ *   antes de resolver la original (P1).
+ *
+ *   Secuencia rota:
+ *     1. Módulo carga → P1 creada
+ *     2. DOMContentLoaded → app.js llama onAuthReady.then(cb) → cb en P1
+ *     3. Firebase dispara onAuthStateChanged (async, DESPUÉS del sync)
+ *     4. _handleLogin → _authReady = P2   ← P1 queda huérfana
+ *     5. _authResolve(user) → resuelve P2
+ *     6. cb de app.js (en P1) NUNCA dispara → app nunca arranca
+ *
+ *   CORRECCIÓN: La Promise inicial (P1) NO se recrea en el primer
+ *   login. Solo se recrea cuando hay un CAMBIO de usuario
+ *   (ya había una sesión previa y cambió el UID).
+ *   En el primer login se usa directamente P1 → _authResolve(user)
+ *   resuelve P1 → app.js callback dispara correctamente.
+ *
+ * Resto de correcciones (v2.2):
  * • _authResolve usa patrón re-creatable (no Promise única)
  * • Eliminados duplicados: stopRealtimeListeners y limpieza
  *   de email ya se manejan dentro de cleanupRoles()
@@ -23,8 +44,9 @@ import { initRoles, cleanupRoles } from './auth-roles.js';
 const $id = id => document.getElementById(id);
 
 // ── Promise que app.js puede esperar ──────────────────────────
-// Patrón: se re-crea en cada cambio de auth para evitar el
-// problema de "Promise resuelta con null en logout".
+// FIX v2.3: Esta Promise INICIAL no debe reemplazarse en el primer
+// login. app.js llama .then() sobre ella antes de que Firebase
+// dispare onAuthStateChanged (que es siempre async).
 let _authResolve;
 let _authReady = new Promise(resolve => { _authResolve = resolve; });
 
@@ -88,7 +110,6 @@ function showAuthError(message) {
     if (loginEl) loginEl.classList.remove('auth-hidden');
     if (appEl) appEl.classList.remove('auth-visible');
 
-    // Mostrar el error en el campo de error del login
     const errEl = $id('loginError');
     if (errEl) {
         errEl.textContent = message;
@@ -102,7 +123,6 @@ function showAuthError(message) {
 // ═════════════════════════════════════════════════════════════
 
 export function initAuth() {
-    // ── Si Firebase Auth no está disponible → BLOQUEAR ────────
     if (!window._auth) {
         console.error('[Auth] Firebase Auth no disponible — acceso bloqueado.');
         showAuthError('⚠️ Error de configuración: Firebase Auth no está disponible.');
@@ -111,11 +131,8 @@ export function initAuth() {
     }
 
     window._auth.onAuthStateChanged(async function (user) {
-        // ── Guard: evitar procesar si ya hay un cambio en curso ──
-        // (puede pasar si Firebase dispara dos eventos rápido)
         if (_authChangeInProgress) {
             console.warn('[Auth] Cambio de auth en progreso — encolando.');
-            // Esperar a que termine el anterior
             await new Promise(r => {
                 const check = setInterval(() => {
                     if (!_authChangeInProgress) {
@@ -123,7 +140,6 @@ export function initAuth() {
                         r();
                     }
                 }, 100);
-                // Safety: máximo 10s de espera
                 setTimeout(() => { clearInterval(check); r(); }, 10000);
             });
         }
@@ -138,7 +154,6 @@ export function initAuth() {
             }
         } catch (err) {
             console.error('[Auth] Error en onAuthStateChanged:', err);
-            // Fallback: mostrar login
             showLogin();
             _authResolve(null);
         } finally {
@@ -160,18 +175,20 @@ async function _handleLogin(user) {
     if (_lastAuthUid && _lastAuthUid !== user.uid) {
         console.info('[Auth] Cambio de usuario detectado — limpiando sesión anterior.');
         cleanupRoles();
+        // FIX v2.3: Solo recrear la Promise al CAMBIAR de usuario.
+        // En el primer login (_lastAuthUid era null) se usa la Promise
+        // inicial sobre la que app.js ya registró su .then().
+        // Reemplazarla aquí causaba que app.js nunca arrancara.
+        _authReady = new Promise(resolve => { _authResolve = resolve; });
     }
+    // ↑ Si _lastAuthUid === null (primer login), NO se recrea _authReady.
+    //   La Promise P1 original sigue viva y app.js recibirá el resolve.
 
     _lastAuthUid = user.uid;
 
-    // Re-crear Promise de auth ready para este nuevo login
-    _authReady = new Promise(resolve => { _authResolve = resolve; });
-
-    // Mostrar pantalla de carga mientras se obtiene el rol
     showAuthLoading();
 
     try {
-        // ── initRoles CON timeout de seguridad ───────────────
         const role = await Promise.race([
             initRoles(user),
             new Promise((_, reject) =>
@@ -179,7 +196,6 @@ async function _handleLogin(user) {
             )
         ]);
 
-        // ── Verificar que no se hizo logout mientras esperábamos ──
         if (_lastAuthUid !== user.uid) {
             console.warn('[Auth] Usuario cambió durante initRoles — abortando.');
             return;
@@ -190,7 +206,6 @@ async function _handleLogin(user) {
         _authResolve(user);
 
     } catch (err) {
-        // ── Verificar que no se hizo logout mientras esperábamos ──
         if (_lastAuthUid !== user.uid) {
             console.warn('[Auth] Usuario cambió durante initRoles (error path) — abortando.');
             return;
@@ -202,8 +217,6 @@ async function _handleLogin(user) {
             console.error('[Auth] Error al inicializar roles:', err);
         }
 
-        // initRoles tiene fallback interno, así que la app debería
-        // funcionar. Mostrar la app de todos modos.
         showApp(user);
         _authResolve(user);
     }
@@ -215,16 +228,10 @@ function _handleLogout() {
     const prevUid = _lastAuthUid;
     _lastAuthUid = null;
 
-    // cleanupRoles() se encarga de:
-    // - Cancelar listener de /usuarios/{uid}
-    // - Limpiar state (currentUser, userRole, userProfile)
-    // - Detener listeners de datos (stopRealtimeListeners)
-    // - Limpiar UI (data-role, badge, email)
     cleanupRoles();
-
     showLogin();
 
-    // Re-crear Promise de auth ready
+    // Recrear Promise para el próximo login
     _authReady = new Promise(resolve => { _authResolve = resolve; });
     _authResolve(null);
 
@@ -263,10 +270,8 @@ export async function handleLogin() {
     const email = (emailInput?.value || '').trim();
     const password = passInput?.value || '';
 
-    // Limpiar error anterior
     if (errEl) errEl.classList.remove('visible');
 
-    // Validación
     if (!email || !password) {
         if (errEl) {
             errEl.textContent = 'Por favor ingresa tu correo y contraseña.';
@@ -275,7 +280,6 @@ export async function handleLogin() {
         return;
     }
 
-    // Deshabilitar botón
     if (btn) btn.disabled = true;
     if (btnText) btnText.textContent = 'Iniciando sesión…';
 
@@ -288,9 +292,6 @@ export async function handleLogin() {
 
     try {
         await window._auth.signInWithEmailAndPassword(email, password);
-        // onAuthStateChanged se encarga del resto
-
-        // Limpiar campos después de login exitoso
         if (passInput) passInput.value = '';
 
     } catch (err) {
@@ -314,12 +315,8 @@ export async function handleLogin() {
 export async function signOutUser() {
     if (!window._auth) return;
     try {
-        // Cerrar sidebar si está abierto
         window.sbClose?.();
-
         await window._auth.signOut();
-        // onAuthStateChanged se encarga de cleanupRoles + showLogin
-
         window.showNotification?.('👋 Sesión cerrada correctamente.');
         console.info('[Auth] signOut ejecutado.');
     } catch (err) {

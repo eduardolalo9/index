@@ -1,34 +1,26 @@
 /**
- * js/products.js — v2.2 CORREGIDO
+ * js/products.js — v2.3 CORREGIDO
  * ══════════════════════════════════════════════════════════════
  * Gestión de productos: CRUD, importación Excel, cálculos de
  * stock, sincronización de conteo desde la nube.
  *
- * EXPORTS:
- *   - syncStockByAreaFromConteo()    → sync.js
- *   - calcularTotalConAbiertas()     → reportes.js
- *   - calcularContenidoMl()          → reportes.js, render.js
- *   - handleFileImport()             → app.js (delegación de eventos)
- *   - importFullData()               → app.js (delegación de eventos) ← NUEVO
- *   - addProduct()                   → render.js
- *   - updateProduct()                → render.js
- *   - deleteProduct()                → render.js
- *   - getProductById()               → varios módulos
- *   - getProductsByGroup()           → render.js
- *   - getUniqueGroups()              → render.js
- *   - filterByGroup()                → render.js ← NUEVO
- *   - getAvailableGroups()           → render.js ← NUEVO
- *   - getTotalStock()                → render.js ← NUEVO
- *   - parseExcelNumber()             → helper público
+ * CORRECCIÓN v2.3:
+ * ──────────────────────────────────────────────────────────────
+ * BUG: ajustarProducto() importaba y llamaba enviarNotificacionAjuste()
+ *   que NO existe en notificaciones.js (la función correcta es
+ *   enviarNotificacion). El optional chaining ?.() evitaba el
+ *   crash, pero la notificación nunca se enviaba silenciosamente.
  *
- * CORRECCIONES v2.2:
- * • Añadido import de AREA_KEYS desde constants.js — se usaba en
- *   calcularStockTotal, syncStockByAreaFromConteo y ajustarProducto
- *   pero NO estaba importado → ReferenceError en runtime.
- * • Añadida filterByGroup() — importada por render.js pero no existía.
- * • Añadida getAvailableGroups() — importada por render.js pero no existía.
- * • Añadida getTotalStock(p) — importada por render.js pero no existía.
- * • Añadida importFullData(event) — importada por app.js pero no existía.
+ *   CORRECCIÓN: Cambiado a enviarNotificacion() con los parámetros
+ *   correctos del objeto de notificación.
+ *
+ * CORRECCIONES v2.2 (anteriores):
+ * • Añadido import de AREA_KEYS desde constants.js
+ * • Añadida filterByGroup()
+ * • Añadida getAvailableGroups()
+ * • Añadida getTotalStock(product)
+ * • Añadida importFullData(event)
+ * • tieneConversion() ahora exportada
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -37,7 +29,7 @@ import { state }                from './state.js';
 import { showNotification }     from './ui.js';
 import { saveToLocalStorage }   from './storage.js';
 import { PESO_BOTELLA_VACIA_OZ,
-         AREA_KEYS }            from './constants.js'; // FIX: AREA_KEYS no estaba importado
+         AREA_KEYS }            from './constants.js';
 
 // ═════════════════════════════════════════════════════════════
 // HELPER: parsear números de Excel
@@ -67,52 +59,20 @@ export function parseExcelNumber(value) {
 // CRUD DE PRODUCTOS
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Busca un producto por ID.
- * @param {string} id
- * @returns {object|undefined}
- */
 export function getProductById(id) {
   return state.products.find(p => p.id === id);
 }
 
-/**
- * Devuelve las categorías únicas de los productos actuales.
- * @returns {string[]}
- */
 export function getUniqueGroups() {
   const groups = new Set(state.products.map(p => p.group || 'General'));
   return ['Todos', ...Array.from(groups).sort()];
 }
 
-/**
- * Filtra productos por grupo (categoría).
- * @param {string} group — 'Todos' devuelve todos
- * @returns {object[]}
- */
 export function getProductsByGroup(group = 'Todos') {
   if (group === 'Todos') return [...state.products];
   return state.products.filter(p => (p.group || 'General') === group);
 }
 
-// ─────────────────────────────────────────────────────────────
-// FIX CRÍTICO: funciones importadas por render.js que no existían
-// ─────────────────────────────────────────────────────────────
-
-/**
- * filterByGroup() — FIX v2.2
- * ──────────────────────────────────────────────────────────────
- * Filtra los productos del estado aplicando el grupo seleccionado
- * (state.selectedGroup) Y el término de búsqueda (state.searchTerm).
- *
- * render.js la usa como:
- *   const filtered = filterByGroup();
- *
- * Era importada desde './products.js' pero NO existía →
- * SyntaxError al cargar render.js → pantalla en blanco.
- *
- * @returns {object[]} productos filtrados
- */
 export function filterByGroup() {
   let products = getProductsByGroup(state.selectedGroup || 'Todos');
 
@@ -129,40 +89,13 @@ export function filterByGroup() {
   return products;
 }
 
-/**
- * getAvailableGroups() — FIX v2.2
- * ──────────────────────────────────────────────────────────────
- * Devuelve los grupos disponibles para el selector de filtro.
- * Alias de getUniqueGroups() con el nombre que render.js espera.
- *
- * Era importada desde './products.js' pero NO existía →
- * SyntaxError al cargar render.js → pantalla en blanco.
- *
- * @returns {string[]} ['Todos', 'Destilados', ...]
- */
 export function getAvailableGroups() {
   return getUniqueGroups();
 }
 
-/**
- * getTotalStock(product) — FIX v2.2
- * ──────────────────────────────────────────────────────────────
- * Devuelve el stock total de un producto en TODAS las áreas.
- *
- * render.js la usa como:
- *   const total = getTotalStock(p);          // número simple
- *   const totalStock = state.products.reduce((s, p) => s + getTotalStock(p), 0);
- *
- * Era importada desde './products.js' pero NO existía →
- * SyntaxError al cargar render.js → pantalla en blanco.
- *
- * @param {object} product — objeto producto de state.products
- * @returns {number} suma de stock en las 3 áreas (con decimales)
- */
 export function getTotalStock(product) {
   if (!product) return 0;
 
-  // Sumar stockByArea si está disponible (modo inventario operativo)
   if (product.stockByArea) {
     let total = 0;
     AREA_KEYS.forEach(area => {
@@ -171,21 +104,10 @@ export function getTotalStock(product) {
     return parseFloat(total.toFixed(4));
   }
 
-  // Fallback: calcular desde conteos de auditoría
   return calcularStockTotal(product.id).total;
 }
 
-// ─────────────────────────────────────────────────────────────
-// FIN FIXES de render.js
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Agrega un nuevo producto al catálogo.
- * @param {object} productData — { name, unit, group, capacidadMl?, pesoBotellaLlenaOz? }
- * @returns {object} producto creado
- */
 export function addProduct(productData) {
-  // Generar ID único
   let maxNum = 0;
   state.products.forEach(p => {
     const m = String(p.id).match(/^PRD-(\d+)$/);
@@ -215,12 +137,6 @@ export function addProduct(productData) {
   return product;
 }
 
-/**
- * Actualiza un producto existente.
- * @param {string} id
- * @param {object} updates — campos a actualizar
- * @returns {object|null}
- */
 export function updateProduct(id, updates) {
   const product = state.products.find(p => p.id === id);
   if (!product) {
@@ -246,11 +162,6 @@ export function updateProduct(id, updates) {
   return product;
 }
 
-/**
- * Elimina un producto por ID.
- * @param {string} id
- * @returns {boolean}
- */
 export function deleteProduct(id) {
   const index = state.products.findIndex(p => p.id === id);
   if (index === -1) {
@@ -261,7 +172,6 @@ export function deleteProduct(id) {
   const name = state.products[index].name;
   state.products.splice(index, 1);
 
-  // Limpiar datos de conteo asociados (evita datos huérfanos)
   delete state.inventarioConteo[id];
   delete state.auditoriaConteo[id];
   delete state.auditoriaConteoPorUsuario[id];
@@ -273,24 +183,9 @@ export function deleteProduct(id) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// tieneConversion() — FIX: faltaba export, reportes.js la importa
+// tieneConversion
 // ═════════════════════════════════════════════════════════════
 
-/**
- * tieneConversion(product) — FIX v2.3
- * ──────────────────────────────────────────────────────────────
- * Indica si un producto tiene datos suficientes para convertir
- * unidades a mililitros (requiere capacidadMl definida y > 0).
- *
- * reportes.js la usa como:
- *   const totalMl = tieneConversion(p) ? Math.round(totalGeneral * p.capacidadMl) : null;
- *
- * Era importada desde './products.js' pero NO existía →
- * "does not provide an export named 'tieneConversion'" → crash.
- *
- * @param {object} product — objeto producto de state.products
- * @returns {boolean}
- */
 export function tieneConversion(product) {
   return !!(product && product.capacidadMl && product.capacidadMl > 0);
 }
@@ -299,14 +194,6 @@ export function tieneConversion(product) {
 // CÁLCULOS DE STOCK
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Calcula el stock total de un producto en un área,
- * sumando unidades enteras + equivalente decimal de abiertas.
- *
- * @param {string} productId
- * @param {string} area — 'almacen' | 'barra1' | 'barra2'
- * @returns {number} total con decimales (ej: 5.73)
- */
 export function calcularTotalConAbiertas(productId, area) {
   const product = getProductById(productId);
   if (!product) return 0;
@@ -341,9 +228,6 @@ export function calcularTotalConAbiertas(productId, area) {
   return parseFloat((enteras + totalAbiertas).toFixed(4));
 }
 
-/**
- * Calcula el contenido en mililitros de un producto en un área.
- */
 export function calcularContenidoMl(productId, area) {
   const product = getProductById(productId);
   if (!product || !product.capacidadMl) return 0;
@@ -351,10 +235,6 @@ export function calcularContenidoMl(productId, area) {
   return parseFloat((totalUnidades * product.capacidadMl).toFixed(2));
 }
 
-/**
- * Calcula el stock total de un producto en TODAS las áreas.
- * @returns {{ total: number, porArea: object, totalMl: number }}
- */
 export function calcularStockTotal(productId) {
   const porArea = {};
   let total = 0;
@@ -377,10 +257,6 @@ export function calcularStockTotal(productId) {
 // MULTI-USUARIO
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Calcula el total considerando conteos de MÚLTIPLES usuarios.
- * Enteras: toma el MAYOR. Abiertas: concatena todas.
- */
 export function calcularTotalMultiUsuario(productId, area) {
   const product = getProductById(productId);
   if (!product) return 0;
@@ -426,7 +302,7 @@ export function calcularTotalMultiUsuario(productId, area) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// syncStockByAreaFromConteo()
+// syncStockByAreaFromConteo
 // ═════════════════════════════════════════════════════════════
 
 export function syncStockByAreaFromConteo() {
@@ -469,8 +345,6 @@ export function handleFileImport(event) {
 
   console.info('[Import] Archivo recibido:', file.name, file.size, 'bytes');
 
-  // FIX BUG-2: era === 'user', pero si rol es null (Firestore lento) también pasaba.
-  // Ahora solo permite importar si el rol ES explícitamente 'admin'.
   if (state.userRole !== 'admin') {
     showNotification('⛔ Solo el administrador puede importar productos');
     fileInput.value = '';
@@ -599,11 +473,6 @@ export function handleFileImport(event) {
 
       state.products = state.products.concat(toImport);
 
-      // FIX BUG-3: estampar el timestamp ANTES de saveToLocalStorage y syncToCloud.
-      // De este modo el anti-eco de sync.js (_lastLocalWriteTs / inventarioApp_lastModified)
-      // tiene el mismo valor que el payload que se sube, y el listener onSnapshot
-      // ignorará el eco de confirmación en lugar de sobreescribir state.products
-      // con la versión vieja de la nube.
       const _importTs = Date.now();
       localStorage.setItem('inventarioApp_lastModified', String(_importTs));
 
@@ -613,8 +482,6 @@ export function handleFileImport(event) {
       state.selectedArea = 'almacen';
       saveToLocalStorage();
 
-      // FIX BUG-3 (continuación): pasar el timestamp al módulo sync para que
-      // _lastLocalWriteTs quede actualizado antes de que llegue el snapshot.
       if (state.syncEnabled && window._db) {
         import('./sync.js').then(m => {
           if (typeof m._setLastLocalWriteTs === 'function') {
@@ -624,9 +491,6 @@ export function handleFileImport(event) {
         }).catch(() => {});
       }
 
-      // FIX BUG-4: fileInput.value='' DENTRO del then() para no interrumpir
-      // el FileReader en navegadores móviles que procesan la cola de microtareas
-      // de forma diferente.
       import('./render.js').then(m => {
         m.renderTab();
         fileInput.value = '';
@@ -643,15 +507,7 @@ export function handleFileImport(event) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// importFullData() — FIX v2.2
-// ══════════════════════════════════════════════════════════════
-// Importa el estado completo de la app desde un archivo JSON
-// (backup exportado previamente). Solo disponible para admins.
-//
-// Era importada por app.js línea 9:
-//   import { ..., importFullData } from './products.js';
-// pero NO existía → SyntaxError al cargar app.js → la app
-// nunca arrancaba.
+// importFullData()
 // ═════════════════════════════════════════════════════════════
 
 export function importFullData(event) {
@@ -682,13 +538,11 @@ export function importFullData(event) {
     try {
       const data = JSON.parse(e.target.result);
 
-      // Validar estructura mínima
       if (!data || typeof data !== 'object') {
         showNotification('⚠️ Formato de archivo inválido');
         fileInput.value = ''; return;
       }
 
-      // Restaurar campos con validación de tipo
       if (Array.isArray(data.products))     state.products     = data.products;
       if (Array.isArray(data.inventories))  state.inventories  = data.inventories;
       if (Array.isArray(data.orders))       state.orders       = data.orders;
@@ -698,7 +552,6 @@ export function importFullData(event) {
       if (data.auditoriaConteoPorUsuario)   state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
       if (data.ajustes)                     state.ajustes                   = data.ajustes;
 
-      // Reconstruir stockByArea desde conteo si se perdió
       syncStockByAreaFromConteo();
       saveToLocalStorage();
 
@@ -730,7 +583,7 @@ export function importFullData(event) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// ajustarProducto()
+// ajustarProducto() — v2.3 CORREGIDO
 // ═════════════════════════════════════════════════════════════
 
 export async function ajustarProducto(productId, area, nuevoValor, motivo = '') {
@@ -746,13 +599,16 @@ export async function ajustarProducto(productId, area, nuevoValor, motivo = '') 
 
   if (state.userRole === 'user') {
     try {
-      const { enviarNotificacionAjuste } = await import('./notificaciones.js');
-      await enviarNotificacionAjuste?.({
-        productId, productName: product.name, area,
-        valorAnterior, nuevoValor, motivo,
-        userId:   state.auditCurrentUser?.userId   || 'unknown',
-        userName: state.auditCurrentUser?.userName || 'Anónimo',
-        timestamp: Date.now(),
+      // FIX v2.3: era enviarNotificacionAjuste (no existe) → ahora enviarNotificacion
+      const { enviarNotificacion } = await import('./notificaciones.js');
+      await enviarNotificacion({
+        tipo:        'ajuste',
+        mensaje:     `${state.auditCurrentUser?.userName || 'Usuario'} ajustó "${product.name}" [${area}]: ${valorAnterior} → ${nuevoValor}${motivo ? ' — ' + motivo : ''}`,
+        usuarioId:   state.currentUser?.uid || state.auditCurrentUser?.userId || 'anon',
+        usuarioName: state.currentUser?.email || state.auditCurrentUser?.userName || 'Anónimo',
+        productoId:  productId,
+        productoName: product.name,
+        datos: { area, valorAnterior, nuevoValor, motivo, timestamp: Date.now() },
       });
     } catch (e) {
       console.warn('[Products] No se pudo enviar notificación de ajuste:', e);

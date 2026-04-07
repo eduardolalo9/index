@@ -1,13 +1,11 @@
 /**
- * js/state.js — v2.3 DEFINITIVO
+ * js/state.js — v2.4 DEFINITIVO
  * ══════════════════════════════════════════════════════════════
  * Estado global centralizado de la aplicación.
  * TODAS las propiedades que cualquier módulo lee/escribe deben
  * estar declaradas aquí — sin excepción.
  *
- * CORRECCIONES ACUMULADAS (v2.1 → v2.3):
- *
- * v2.1 (original) — sin ninguna de las propiedades de abajo
+ * CORRECCIONES ACUMULADAS:
  *
  * v2.2 — añadidas:
  *   • currentUser        — auth-roles.js: _applyRoleToState()
@@ -16,18 +14,17 @@
  *   • auditoriaAreaActiva — render.js: pantalla de conteo de auditoría
  *
  * v2.3 — añadidas:
- *   • auditoriaView      — audit.js lo escribe ('counting'|'selection');
- *                          render.js lo lee para decidir qué sub-vista pintar.
- *                          Sin declarar → undefined → siempre pintaba selección.
- *   • notifications      — notificaciones.js usa state.NOTIFICATIONS (en inglés)
- *                          pero state.js solo tenía state.notificaciones (en español).
- *                          Mismatch de nombre → state.notifications era undefined →
- *                          filter/findIndex sobre undefined → TypeError en runtime.
- *   • notificationsUnread — notificaciones.js escribe este número para el badge.
- *                          Sin declarar → badge siempre mostraba undefined.
- *   • ajustesPendientes  — ajustes.js y render.js usan state.ajustesPendientes
- *                          (con s final) para la lista de ajustes del admin.
- *                          Sin declarar → optional chaining lo ignoraba silenciosamente.
+ *   • auditoriaView      — audit.js lo escribe ('counting'|'selection')
+ *   • notifications      — notificaciones.js usa state.notifications (inglés)
+ *   • notificationsUnread — notificaciones.js para el badge
+ *   • ajustesPendientes  — ajustes.js y render.js
+ *
+ * v2.4 — añadida:
+ *   • isAuditoriaMode    — audit.js escribe true/false en auditoriaEntrarArea,
+ *                          auditoriaFinalizarConteo y auditoriaResetear.
+ *                          Sin declarar aquí era asignación dinámica no tipada.
+ *                          actions.js lo lee para saber si actualizar auditoriaConteo
+ *                          en openInventarioModal (fix del conteo en modo auditoría).
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -53,8 +50,8 @@ export const state = {
   // Estructura: { [productId]: { almacen: number, barra1: number, barra2: number } }
   inventarioConteo: {},
 
-  // ─── Auditoría (conteo de verificación) ─────────────────────
-  // Estructura: { [productId]: { [area]: { enteras: n, abiertas: [...] } } }
+  // ─── Auditoría (conteo de verificación ciega) ───────────────
+  // Estructura: { [productId]: { [area]: { enteras: n, abiertas: [...oz] } } }
   auditoriaConteo: {},
 
   // Estado de cada zona: 'pendiente' | 'en_progreso' | 'completada'
@@ -64,15 +61,15 @@ export const state = {
     barra2:  'pendiente',
   },
 
-  // FIX v2.2 — área activa en pantalla de conteo
-  // render.js: if (state.auditoriaView === 'counting' && state.auditoriaAreaActiva)
+  // Área activa en pantalla de conteo
   auditoriaAreaActiva: null,
 
-  // FIX v2.3 — sub-vista de auditoría: 'selection' | 'counting'
-  // audit.js escribe 'counting' al entrar al conteo y 'selection' al volver.
-  // render.js lo lee para elegir qué sub-pantalla pintar.
-  // Sin esta propiedad declarada → siempre undefined → siempre pintaba selección.
+  // Sub-vista de auditoría: 'selection' | 'counting'
   auditoriaView: 'selection',
+
+  // FIX v2.4: audit.js lo escribe en auditoriaEntrarArea/Finalizar/Resetear.
+  // actions.js lo lee para decidir si actualizar auditoriaConteo al guardar.
+  isAuditoriaMode: false,
 
   // ─── Multi-usuario (conteo por persona) ─────────────────────
   // Estructura: { [productId]: { [area]: { [userId]: { enteras, abiertas, ts } } } }
@@ -82,7 +79,7 @@ export const state = {
   // { userId: string, userName: string, role: 'admin'|'user' }
   auditCurrentUser: null,
 
-  // ─── Sesión de autenticación (FIX v2.2) ───────────────────────
+  // ─── Sesión de autenticación ──────────────────────────────────
   currentUser:  null,   // firebase.User | null  — asignado por auth-roles.js
   userProfile:  null,   // { uid, email, displayName, role, ... } — ídem
 
@@ -91,31 +88,25 @@ export const state = {
   userRole: null,
 
   // ─── Sincronización ─────────────────────────────────────────
-  syncEnabled:        true,    // Toggle del usuario (pausar/activar sync)
-  _cloudSyncPending:  false,   // Hay cambios locales sin subir
-  _syncInProgress:    false,   // Mutex: evita sync simultáneos
-  _lastCloudSync:     0,       // Timestamp del último sync exitoso
-  _lastDataHash:      '',      // Hash para detectar cambios reales
+  syncEnabled:        true,
+  _cloudSyncPending:  false,
+  _syncInProgress:    false,
+  _lastCloudSync:     0,
+  _lastDataHash:      '',
 
-  // ─── Ajustes pendientes offline (FIX v2.2) ───────────────────
-  // app.js verifica .length > 0 al reconectar para subirAjustesPendientes()
+  // ─── Ajustes pendientes offline ───────────────────────────────
   adjustmentsPending: [],
 
-  // ─── Notificaciones (FIX v2.3) ───────────────────────────────
-  // IMPORTANTE: notificaciones.js usa `state.notifications` (inglés),
-  // NO `state.notificaciones` (español). El nombre original causaba
-  // TypeError: Cannot read properties of undefined (reading 'findIndex').
-  notifications:       [],   // Array de notificaciones del usuario/admin
-  notificationsUnread: 0,    // Contador de no leídas → badge en UI
+  // ─── Notificaciones ───────────────────────────────────────────
+  notifications:       [],
+  notificationsUnread: 0,
 
-  // ─── Ajustes pendientes del admin (FIX v2.3) ─────────────────
-  // ajustes.js y render.js usan `state.ajustesPendientes` (con 's')
-  // para la lista de solicitudes de ajuste pendientes de aprobar.
+  // ─── Ajustes pendientes del admin ─────────────────────────────
   ajustesPendientes: [],
 
   // ─── Config de ajustes sincronizada ──────────────────────────
   ajustes: {},
 
   // ─── Reportes ───────────────────────────────────────────────
-  reportesPublicados: [],   // Reportes publicados por admin para descarga
+  reportesPublicados: [],
 };

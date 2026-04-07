@@ -1,25 +1,37 @@
 /**
- * js/reportes.js
+ * js/reportes.js — v1.1 CORREGIDO
  * ══════════════════════════════════════════════════════════════
  * Módulo de reportes publicados.
+ *
+ * CORRECCIÓN v1.1:
+ * ──────────────────────────────────────────────────────────────
+ * BUG: publicarReporte() leía los datos de enteras/abiertas desde
+ *   state.inventarioConteo[p.id][area], que almacena un NÚMERO PLANO
+ *   (ej: 5), no un objeto { enteras, abiertas }.
+ *
+ *   El código hacía:
+ *     const d = (state.inventarioConteo[p.id] || {})[area] || { enteras: 0, abiertas: [] };
+ *     const enteras  = d.enteras || 0;    // siempre 0 — d es un número
+ *     const abiertas = d.abiertas || [];  // siempre [] — d es un número
+ *
+ *   Resultado: el Excel del reporte publicado siempre mostraba 0
+ *   en las columnas "Enteras" y "Abiertas", aunque hubiera conteos.
+ *   El campo "Total" era correcto (venía de calcularTotalConAbiertas).
+ *
+ *   CORRECCIÓN: Leer enteras/abiertas desde state.auditoriaConteo,
+ *   que sí tiene la estructura correcta { enteras, abiertas: [...] }.
+ *   El campo total sigue viniendo de calcularTotalConAbiertas para
+ *   mantener los cálculos de fracciones de botellas abiertas.
  *
  * FLUJO:
  *   Admin → openPublicarReporteModal()
  *     → publicarReporte(titulo)
- *       → Escribe en /reportesPublicados/{id} con datos consolidados
+ *       → Escribe en /reportesPublicados/{id}
  *       → Notifica a todos los usuarios (broadcast)
  *   Usuario → ve la sección "Reportes" en Historia
  *     → descargarReporteExcel(reporteId) → .xlsx local
  *
  * COLECCIÓN FIRESTORE:  /reportesPublicados/{reporteId}
- * {
- *   titulo, fecha, timestamp, publicadoPor, docId,
- *   totalProductos,
- *   productos: [{ id, nombre, unidad, grupo, capacidadMl,
- *                 areas: { almacen, barra1, barra2 },
- *                 totalLlenas, totalAbiertas, totalGeneral, totalMl }],
- *   auditoriaStatus: { almacen, barra1, barra2 }
- * }
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -106,7 +118,7 @@ export function openPublicarReporteModal() {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  PUBLICAR REPORTE (admin)
+//  PUBLICAR REPORTE (admin) — v1.1 CORREGIDO
 // ═════════════════════════════════════════════════════════════
 
 export async function publicarReporte(titulo = '') {
@@ -116,7 +128,7 @@ export async function publicarReporte(titulo = '') {
     }
     if (!window._db) { showNotification('⚠️ Firebase no disponible'); return; }
 
-    const fecha      = new Date().toLocaleDateString('es-MX');
+    const fecha       = new Date().toLocaleDateString('es-MX');
     const tituloFinal = titulo || `Reporte ${fecha}`;
 
     // Construir datos consolidados
@@ -126,13 +138,19 @@ export async function publicarReporte(titulo = '') {
         let totalAbiertas = 0;
 
         AREA_KEYS.forEach(area => {
-            const d = (state.inventarioConteo[p.id] || {})[area] || { enteras: 0, abiertas: [] };
-            const enteras  = d.enteras || 0;
-            const abiertas = d.abiertas || [];
-            const total    = calcularTotalConAbiertas(p.id, area);
-            areas[area]    = { enteras, abiertas: abiertas.length, total };
+            // FIX v1.1: Leer enteras/abiertas desde auditoriaConteo (estructura correcta),
+            // NO desde inventarioConteo que es un número plano.
+            // inventarioConteo[p.id][area] = número plano (sin .enteras ni .abiertas)
+            // auditoriaConteo[p.id][area]  = { enteras: n, abiertas: [oz, ...] } ← correcto
+            const conteoAudit = state.auditoriaConteo[p.id]?.[area];
+            const enteras     = conteoAudit?.enteras || 0;
+            const abiertasArr = Array.isArray(conteoAudit?.abiertas) ? conteoAudit.abiertas : [];
+            const total       = calcularTotalConAbiertas(p.id, area);
+
+            areas[area] = { enteras, abiertas: abiertasArr.length, total };
             totalLlenas   += enteras;
-            totalAbiertas += abiertas.reduce((s, v) => s + (typeof v === 'number' ? v : 0), 0);
+            // Sumar oz de botellas abiertas (para el reporte)
+            totalAbiertas += abiertasArr.reduce((s, v) => s + (typeof v === 'number' ? v : 0), 0);
         });
 
         const totalGeneral = AREA_KEYS.reduce((s, a) => s + (areas[a].total || 0), 0);

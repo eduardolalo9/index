@@ -1,31 +1,38 @@
 /**
- * js/audit.js
+ * js/audit.js — v1.2 (CORREGIDO)
  * ══════════════════════════════════════════════════════════════
  * Auditoría Física Ciega: identidad multiusuario, estadísticas
  * de conteo, render de paneles y flujo de navegación.
+ *
+ * CORRECCIÓN v1.2:
+ * ──────────────────────────────────────────────────────────────
+ * BUG: AREA_KEYS se usaba en auditoriaFinalizarConteo() pero
+ *   NO estaba importada desde './constants.js'.
+ *   → ReferenceError: AREA_KEYS is not defined
+ *   → Error al intentar finalizar el conteo de cualquier área.
+ *
+ *   CORRECCIÓN: Añadida AREA_KEYS al import de './constants.js'.
  *
  * CAMBIOS RESPECTO A LA VERSIÓN ANTERIOR:
  *
  *   auditoriaFinalizarConteo() [actualizada]
  *     Antes: actualizaba auditoriaStatus localmente y lo subía
- *            a través de saveToLocalStorage → syncToCloud, lo que
- *            podía sobreescribir el cierre de otra zona hecho por
- *            un dispositivo distinto.
- *
+ *            a través de saveToLocalStorage → syncToCloud.
  *     Ahora: llama a txCloseZone(area) de sync.js, que usa
  *            runTransaction con dot-notation para escribir SOLO
  *            el campo de esta zona sin tocar las demás.
- *            El estado local se actualiza con el resultado
- *            mergedStatus devuelto por la transacción.
+ *            Idempotente: si otro dispositivo ya cerró esta zona,
+ *            lo detecta y no sobreescribe.
  *
  *   auditoriaResetear() [actualizada]
- *     Usa resetConteoAtomicoEnFirestore() (batch + transaction),
- *     que garantiza que todos los deletes sean atómicos.
+ *     Usa resetConteoAtomicoEnFirestore() (batch + transaction).
  * ══════════════════════════════════════════════════════════════
  */
 
 import { state }                    from './state.js';
-import { AREAS_AUDITORIA, AUDIT_TOLERANCE } from './constants.js';
+import { AREAS_AUDITORIA,
+         AREA_KEYS,                       // FIX v1.2: faltaba este import
+         AUDIT_TOLERANCE }          from './constants.js';
 import { showNotification, showConfirm, escapeHtml } from './ui.js';
 import { saveToLocalStorage }       from './storage.js';
 import {
@@ -260,24 +267,10 @@ export function auditoriaEntrarArea(area) {
 /**
  * Finaliza el conteo de una zona y la marca como completada.
  *
- * FLUJO ACTUALIZADO (3 operaciones paralelas no bloqueantes):
- *
- *  1. txCloseZone(area)
- *     Transacción en el doc principal que cierra SOLO esta zona
- *     con dot-notation. No sobreescribe el estado de las demás.
- *     Idempotente: si otro dispositivo ya cerró esta zona, lo
- *     detecta y no sobreescribe (devuelve wasAlreadyClosed=true).
- *
- *  2. syncConteoAtomicoPorArea(area)
- *     Transacción en conteoAreas/{area}. Reemplaza la entrada
- *     del usuario actual (_userEntradas) sin acumular duplicados.
- *
- *  3. syncConteoPorUsuarioToFirestore(area)
- *     Transacción en conteoPorUsuario/{area}. Escribe solo la
- *     entrada de este userId, preservando la de los demás.
- *
- * Si Firebase no está disponible o no hay conexión, el estado
- * se guarda localmente y se sincronizará cuando haya conexión.
+ * FLUJO (3 operaciones paralelas no bloqueantes):
+ *  1. txCloseZone(area)          — transacción dot-notation en doc principal
+ *  2. syncConteoAtomicoPorArea   — transacción en conteoAreas/{area}
+ *  3. syncConteoPorUsuarioToFirestore — transacción en conteoPorUsuario/{area}
  */
 export function auditoriaFinalizarConteo() {
     if (!state.auditoriaAreaActiva) return;
@@ -325,6 +318,7 @@ export function auditoriaFinalizarConteo() {
                     if (result.mergedStatus) {
                         const prevStatus = { ...state.auditoriaStatus };
                         state.auditoriaStatus = result.mergedStatus;
+                        // FIX v1.2: AREA_KEYS ahora importado correctamente
                         const changed = AREA_KEYS.some(a => prevStatus[a] !== result.mergedStatus[a]);
                         if (changed) {
                             saveToLocalStorage();
@@ -370,15 +364,12 @@ export function auditoriaTodasCompletas() {
 
 /**
  * Reinicia la auditoría completa.
- * Usa resetConteoAtomicoEnFirestore() que garantiza:
- *   - Batch atómico para borrar conteoAreas + conteoPorUsuario (6 docs)
- *   - Transaction para resetear auditoriaStatus en el doc principal
+ * Usa resetConteoAtomicoEnFirestore() — batch + transaction atómicos.
  */
 export function auditoriaResetear() {
     showConfirm(
         '⚠️ ¿Iniciar nueva auditoría?\n\nSe borrarán todos los conteos actuales de las tres áreas.',
         async () => {
-            // Actualización local optimista
             state.auditoriaStatus           = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
             state.auditoriaConteo           = {};
             state.auditoriaConteoPorUsuario = {};
@@ -390,7 +381,6 @@ export function auditoriaResetear() {
             const { renderTab } = await import('./render.js');
             renderTab();
 
-            // Reset en Firestore (batch + transaction)
             if (window._db && navigator.onLine) {
                 try {
                     await resetConteoAtomicoEnFirestore();

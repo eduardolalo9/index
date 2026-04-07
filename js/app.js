@@ -1,5 +1,21 @@
 /**
- * js/app.js — Punto de entrada principal (CORREGIDO)
+ * js/app.js — Punto de entrada principal (CORREGIDO v2.1)
+ *
+ * CORRECCIÓN v2.1:
+ * ──────────────────────────────────────────────────────────────
+ * BUG: Service Worker registrado como:
+ *   navigator.serviceWorker.register('/sw.js', { scope: '/' })
+ *
+ *   Con la app desplegada en GitHub Pages en el subdirectorio
+ *   /index/ (eduardolalo9.github.io/index/), el navegador rechaza
+ *   el SW porque el archivo /sw.js no existe en la raíz del
+ *   dominio ni tiene permiso de controlar el subdirectorio.
+ *   Resultado: el SW nunca se registra, sin offline, sin caché.
+ *
+ *   CORRECCIÓN: Cambiar a rutas relativas:
+ *     './sw.js'  con  { scope: './' }
+ *   Esto hace que el SW controle exactamente el subdirectorio
+ *   en el que vive la app, independientemente del host.
  */
 
 import { initTheme } from './ui.js';
@@ -19,14 +35,17 @@ import { INITIAL_PRODUCTS,
 import './notificaciones.js';
 import './ajustes.js';
 import './reportes.js';
-import './actions.js';   // FIX: expone en window todas las funciones de onClick
+import './actions.js';   // expone en window todas las funciones de onClick
 
 console.info('[App] BarInventory arrancando…');
 
 // ── Service Worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    // FIX v2.1: Rutas relativas ('./sw.js', scope './') en lugar de
+    // absolutas ('/sw.js', scope '/') — necesario para GitHub Pages
+    // en subdirectorios (ej: eduardolalo9.github.io/index/).
+    navigator.serviceWorker.register('./sw.js', { scope: './' })
       .then(reg => {
         console.info('[SW] Registrado — scope:', reg.scope);
         reg.addEventListener('updatefound', () => {
@@ -85,7 +104,10 @@ window.addEventListener('DOMContentLoaded', () => {
   /* 3. INICIAR AUTH */
   initAuth();
 
-  /* 4. ESPERAR a que auth resuelva */
+  /* 4. ESPERAR a que auth resuelva
+   *    onAuthReady es un live binding a _authReady en auth.js.
+   *    Gracias al fix de auth.js v2.3, la Promise inicial (P1) es
+   *    la misma que se resuelve en el primer login → este .then() dispara. */
   onAuthReady.then(user => {
     if (!user) {
       console.info('[App] Sin usuario autenticado — esperando login.');
@@ -111,11 +133,7 @@ window.addEventListener('DOMContentLoaded', () => {
     /* D. Renderizar tab activo */
     switchTab(state.activeTab);
 
-    /* E. DELEGACIÓN DE EVENTOS para inputs de archivo
-     *    Esto funciona SIEMPRE, sin importar si el DOM se recrea.
-     *    Usamos delegación en document.body para capturar change
-     *    de cualquier input con esos IDs.
-     */
+    /* E. DELEGACIÓN DE EVENTOS para inputs de archivo */
     document.body.addEventListener('change', function(e) {
       const target = e.target;
       if (!target || target.tagName !== 'INPUT') return;

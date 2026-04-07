@@ -1,21 +1,36 @@
 /**
- * js/actions.js — CORREGIDO v2
+ * js/actions.js — v2.3 CORREGIDO
  * ══════════════════════════════════════════════════════════════
  * Implementa y expone en window TODAS las funciones de acción
  * llamadas desde los onclick del HTML generado por render.js.
  *
- * CORRECCIÓN CRÍTICA (causa del "Verificando sesión…" infinito):
+ * CORRECCIÓN v2.3:
+ * ──────────────────────────────────────────────────────────────
+ * BUG: openInventarioModal() guardaba el conteo SOLO en
+ *   state.inventarioConteo[productId][area] = qty (número plano).
  *
- *   LÍNEA 31 — import de AREA_KEYS:
- *     ❌ ANTES: AREA_KEYS from './products.js'
- *     ✅ AHORA: AREA_KEYS from './constants.js'
+ *   El problema: cuando el usuario está en modo auditoría
+ *   (state.isAuditoriaMode === true), render.js muestra
+ *   state.auditoriaConteo[productId][area].enteras para pintar
+ *   el contador. Como openInventarioModal no actualizaba
+ *   auditoriaConteo, el conteo ingresado nunca aparecía en
+ *   pantalla durante la auditoría → el usuario veía "Sin contar"
+ *   aunque hubiera ingresado valores.
  *
- *   products.js NO exporta AREA_KEYS — lo importa internamente desde
- *   constants.js pero no lo re-exporta. El intento de importar un
- *   símbolo inexistente lanza un SyntaxError que destruye todo el
- *   árbol de módulos ES antes de que app.js llegue a ejecutar
- *   initAuth(), dejando la Promise onAuthReady sin resolver y la
- *   pantalla atascada en "Verificando sesión…" para siempre.
+ *   CORRECCIÓN: al guardar, si state.isAuditoriaMode === true
+ *   también se inicializa/actualiza auditoriaConteo[productId][area]
+ *   con la estructura correcta { enteras: qty, abiertas: [] }.
+ *   Esto preserva la compatibilidad con inventarioConteo y con
+ *   los cálculos de calcularTotalConAbiertas().
+ *
+ * CORRECCIÓN v2.2 (anterior):
+ * ──────────────────────────────────────────────────────────────
+ * LÍNEA 31 — import de AREA_KEYS:
+ *   ❌ ANTES: AREA_KEYS from './products.js'
+ *   ✅ AHORA: AREA_KEYS from './constants.js'
+ *   products.js NO exporta AREA_KEYS. El intento de importar un
+ *   símbolo inexistente lanzaba SyntaxError → pantalla atascada
+ *   en "Verificando sesión…" para siempre.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -29,7 +44,7 @@ import { deleteProduct as _deleteProduct,
          updateProduct,
          calcularStockTotal }       from './products.js';
 import { AREAS,
-         AREA_KEYS }                from './constants.js'; // ← FIX: era './products.js'
+         AREA_KEYS }                from './constants.js'; // ← correcto desde v2.2
 
 // ── Lazy import de render para evitar circularidad ─────────────
 const _render = () => import('./render.js').then(m => m.renderTab()).catch(() => {});
@@ -195,7 +210,6 @@ function openProductModal(productId = null) {
 
 function editProduct(id) { openProductModal(id); }
 
-// ── deleteProduct — usa await showConfirm() que ahora retorna Promise ──
 async function deleteProduct(id) {
     const product = state.products.find(p => p.id === id);
     if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
@@ -371,6 +385,15 @@ async function resetAllInventario() {
     }
 }
 
+/**
+ * openInventarioModal — v2.3 CORREGIDO
+ *
+ * FIX: En modo auditoría (state.isAuditoriaMode === true), además de
+ * actualizar inventarioConteo (número plano para stockByArea), también
+ * inicializa/actualiza auditoriaConteo[productId][area].enteras con la
+ * misma cantidad. Sin esto, el conteo ingresado no aparecía en la
+ * pantalla de auditoría que lee auditoriaConteo para pintar "X ent.".
+ */
 function openInventarioModal(productId) {
     const product = state.products.find(p => p.id === productId);
     if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
@@ -418,15 +441,28 @@ function openInventarioModal(productId) {
 
     overlay.querySelector('#_inv_cancel').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
     overlay.querySelector('#_inv_save').addEventListener('click', () => {
         const qty = parseFloat(overlay.querySelector('#_inv_qty').value);
         if (isNaN(qty) || qty < 0) { showNotification('⚠️ Valor inválido'); return; }
 
+        // ── Actualizar stockByArea ──────────────────────────────────────
         if (!product.stockByArea) product.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
         product.stockByArea[area] = qty;
 
+        // ── Actualizar inventarioConteo (número plano, para sync/export) ─
         if (!state.inventarioConteo[productId]) state.inventarioConteo[productId] = {};
         state.inventarioConteo[productId][area] = qty;
+
+        // FIX v2.3: En modo auditoría, también actualizar auditoriaConteo
+        // con la estructura correcta { enteras, abiertas } que usa render.js.
+        // Sin esto el conteo ingresado no aparecía en pantalla durante la auditoría.
+        if (state.isAuditoriaMode) {
+            if (!state.auditoriaConteo[productId])        state.auditoriaConteo[productId] = {};
+            if (!state.auditoriaConteo[productId][area])  state.auditoriaConteo[productId][area] = { enteras: 0, abiertas: [] };
+            state.auditoriaConteo[productId][area].enteras = qty;
+            // Preservar las abiertas ya registradas (no sobreescribir)
+        }
 
         saveToLocalStorage();
         showNotification(`✅ ${product.name}: ${qty} en ${AREAS[area] || area}`);
