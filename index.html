@@ -122,6 +122,16 @@
                     <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                     Historia
                 </button>
+              <button type="button" class="sb-item" data-sb-tab="notificaciones" onclick="switchTab('notificaciones'); sbClose();" style="position:relative;">
+                    <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+                    Notificaciones
+                    <span id="notifBadge" style="display:none;position:absolute;top:6px;right:8px;background:var(--accent);color:#fff;border-radius:10px;padding:0 5px;font-size:0.58rem;font-weight:700;min-width:16px;text-align:center;"></span>
+                </button>
+                <button type="button" class="sb-item" data-sb-tab="ajustes" onclick="switchTab('ajustes'); sbClose();" style="position:relative;">
+                    <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+                    Ajustes
+                    <span id="ajustesBadge" style="display:none;position:absolute;top:6px;right:8px;background:#ef4444;color:#fff;border-radius:10px;padding:0 5px;font-size:0.58rem;font-weight:700;min-width:16px;text-align:center;"></span>
+                </button>
               <p class="sb-sep">Respaldo</p>
 
 <button type="button" class="sb-item" onclick="exportFullData(); sbClose()">
@@ -142,6 +152,7 @@ Importar datos (JSON)
             </div>
             <div id="sbFoot">
                 <span id="sbUserEmail"></span>
+                <span id="sbRoleBadge" style="display:none;font-size:0.65rem;font-weight:700;padding:2px 8px;border-radius:8px;border:1px solid;margin-bottom:4px;"></span>
                 <div id="cloudSyncBadge" style="display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Sans',sans-serif;font-size:.68rem;font-weight:600;padding:5px 10px;border-radius:8px;margin-bottom:8px;border:1px solid rgba(80,81,106,0.4);color:#8b8ca8;background:rgba(80,81,106,0.12);transition:all .3s ease;">☁️ Sin Firebase</div>
                 <button type="button" onclick="toggleTheme(); sbClose();" class="sb-item" style="width:100%;margin-bottom:6px;" id="sbThemeBtn">
                     <svg class="sb-ico" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
