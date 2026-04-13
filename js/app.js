@@ -1,11 +1,14 @@
 /**
- * js/app.js — Punto de entrada principal (v2.1 CORREGIDO)
+ * js/app.js — v2.1 CORREGIDO
  *
- * FIX BUG-5: Service Worker registrado con ruta absoluta '/sw.js'
- *   y scope '/' — falla en GitHub Pages porque el site vive en
- *   /index/ (no en la raíz del dominio).
- *   CORRECCIÓN: Usar rutas relativas './sw.js' y scope './'
- *   para que funcione en cualquier subdirectorio de GitHub Pages.
+ * FIX BUG-5: Service Worker con ruta absoluta '/sw.js' y scope '/'
+ *   falla en GitHub Pages porque el site vive en /index/, no en la
+ *   raíz del dominio. El navegador rechaza el registro silenciosamente.
+ *   Sin SW: sin instalación PWA, sin caché offline.
+ *   En una barra sin WiFi estable esto inutiliza la app.
+ *
+ *   CORRECCIÓN: Rutas relativas './sw.js' con scope './'
+ *   funcionan en cualquier subdirectorio de GitHub Pages.
  */
 
 import { initTheme } from './ui.js';
@@ -32,9 +35,8 @@ console.info('[App] BarInventory arrancando…');
 // ── Service Worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    // FIX BUG-5: ruta relativa → funciona en GitHub Pages /index/
-    // La ruta absoluta '/sw.js' con scope '/' fallaba porque el
-    // navegador buscaba sw.js en la raíz del dominio, no en /index/.
+    // FIX BUG-5: './sw.js' relativo funciona en /index/ de GitHub Pages.
+    // La ruta absoluta '/sw.js' buscaba el archivo en la raíz del dominio.
     navigator.serviceWorker.register('./sw.js', { scope: './' })
       .then(reg => {
         console.info('[SW] Registrado — scope:', reg.scope);
@@ -60,7 +62,7 @@ if ('serviceWorker' in navigator) {
   console.info('[SW] Service Workers no soportados.');
 }
 
-// ── ESC cierra sidebar si no hay modal abierto ────────────────
+// ── ESC cierra sidebar (sin interferir con modales abiertos) ──
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   const anyOpen = ['productModal', 'orderModal', 'inventarioModal']
@@ -68,22 +70,21 @@ document.addEventListener('keydown', e => {
   if (!anyOpen) window.sbClose?.();
 });
 
-// ── Limpieza al cerrar la pestaña ─────────────────────────────
+// ── Guardar al cerrar pestaña ─────────────────────────────────
 window.addEventListener('beforeunload', () => {
   stopRealtimeListeners();
   try { saveToLocalStorage(); } catch (_) {}
 });
 
 // ═══════════════════════════════════════════════════════════════
-// DOMContentLoaded — Secuencia de arranque
+// DOMContentLoaded
 // ═══════════════════════════════════════════════════════════════
 window.addEventListener('DOMContentLoaded', () => {
   console.info('[App] DOM listo — iniciando secuencia…');
 
-  /* 1. Tema */
   initTheme();
 
-  /* 2. Enter en campos del login */
+  // Enter en campos del login
   document.getElementById('loginEmail')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); document.getElementById('loginPassword')?.focus(); }
   });
@@ -91,54 +92,42 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') { e.preventDefault(); window.handleLogin?.(); }
   });
 
-  /* 3. INICIAR AUTH */
+  // Iniciar autenticación
   initAuth();
 
-  /* 4. ESPERAR a que auth resuelva */
+  // Esperar a que auth resuelva
+  // NOTA: onAuthReady es un live-binding al _authReady de auth.js.
+  // Gracias al FIX BUG-1, en el primer login se resuelve sobre
+  // la Promise original (P1) que este .then() registró primero.
   onAuthReady.then(user => {
     if (!user) {
-      console.info('[App] Sin usuario autenticado — esperando login.');
+      console.info('[App] Sin usuario — esperando login.');
       return;
     }
 
     console.info('[App] Usuario confirmado — cargando aplicación…');
 
-    /* A. Identidad multiusuario */
     initAuditUser();
-
-    /* B. Estado local */
     loadFromLocalStorage();
     syncStockByAreaFromConteo();
 
-    /* C. Productos de ejemplo (primera vez) */
     if (state.products.length === 0) {
-      console.info('[App] Primera ejecución — cargando productos de ejemplo.');
+      console.info('[App] Primera ejecución — productos de ejemplo.');
       state.products = INITIAL_PRODUCTS;
       saveToLocalStorage();
     }
 
-    /* D. Renderizar tab activo */
     switchTab(state.activeTab);
 
-    /* E. DELEGACIÓN DE EVENTOS para inputs de archivo */
+    // Delegación de eventos para inputs de archivo
     document.body.addEventListener('change', function(e) {
       const target = e.target;
       if (!target || target.tagName !== 'INPUT') return;
-
-      if (target.id === 'fileInput') {
-        console.info('[App] fileInput change — llamando handleFileImport');
-        handleFileImport(e);
-        return;
-      }
-
-      if (target.id === 'importDataInput') {
-        console.info('[App] importDataInput change — llamando importFullData');
-        importFullData(e);
-        return;
-      }
+      if (target.id === 'fileInput') { handleFileImport(e); return; }
+      if (target.id === 'importDataInput') { importFullData(e); return; }
     });
 
-    /* F. Red online/offline */
+    // Red online/offline
     window.addEventListener('online', updateNetworkStatus);
     window.addEventListener('offline', updateNetworkStatus);
     updateNetworkStatus();
@@ -149,19 +138,19 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    /* G. Auto-guardado local cada 30 s */
+    // Auto-guardado cada 30s
     setInterval(smartAutoSave, AUTO_SAVE_INTERVAL_MS);
 
-    /* H. Sync de recuperación cada 3 min */
+    // Sync de recuperación cada 3 min
     setInterval(() => {
       if (navigator.onLine && window._db &&
           state._cloudSyncPending && !state._syncInProgress) {
-        console.info('[App] Sync de recuperación — había cambios pendientes.');
+        console.info('[App] Sync de recuperación…');
         syncToCloud().catch(e => console.warn('[App] Sync periódico falló:', e));
       }
     }, SYNC_RECOVERY_INTERVAL_MS);
 
-    /* I. Guard anti doble-click para exportToExcel */
+    // Guard anti doble-click exportToExcel
     let _exportingExcel = false;
     const origExport = window.exportToExcel;
     if (origExport) {
@@ -174,7 +163,7 @@ window.addEventListener('DOMContentLoaded', () => {
       };
     }
 
-    /* J. Label de tema en sidebar */
+    // Label de tema en sidebar
     const sbLabel = document.getElementById('sbThemeLabel');
     if (sbLabel) {
       sbLabel.textContent =
@@ -185,3 +174,4 @@ window.addEventListener('DOMContentLoaded', () => {
     console.info('[App] ✓ Arranque completo.');
   });
 });
+
