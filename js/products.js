@@ -1,30 +1,14 @@
 /**
  * js/products.js — v2.3 CORREGIDO
  * ══════════════════════════════════════════════════════════════
- * Gestión de productos: CRUD, importación Excel, cálculos de
- * stock, sincronización de conteo desde la nube.
- *
  * CORRECCIÓN v2.3:
- * ──────────────────────────────────────────────────────────────
- * BUG: ajustarProducto() importaba y llamaba enviarNotificacionAjuste()
- *   que NO existe en notificaciones.js (la función correcta es
- *   enviarNotificacion). El optional chaining ?.() evitaba el
- *   crash, pero la notificación nunca se enviaba silenciosamente.
- *
- *   CORRECCIÓN: Cambiado a enviarNotificacion() con los parámetros
- *   correctos del objeto de notificación.
- *
- * CORRECCIONES v2.2 (anteriores):
- * • Añadido import de AREA_KEYS desde constants.js
- * • Añadida filterByGroup()
- * • Añadida getAvailableGroups()
- * • Añadida getTotalStock(product)
- * • Añadida importFullData(event)
- * • tieneConversion() ahora exportada
+ *   FIX BUG-6: ajustarProducto() llamaba enviarNotificacionAjuste()
+ *   que NO existe en notificaciones.js. La función correcta es
+ *   enviarNotificacion(). El optional chaining ?.() evitaba el crash
+ *   pero la notificación nunca se enviaba silenciosamente.
  * ══════════════════════════════════════════════════════════════
  */
 
-// ═══ IMPORTS ══════════════════════════════════════════════════
 import { state }                from './state.js';
 import { showNotification }     from './ui.js';
 import { saveToLocalStorage }   from './storage.js';
@@ -42,12 +26,9 @@ export function parseExcelNumber(value) {
   let str = String(value).trim();
   str = str.replace(/\s/g, '');
 
-  // Formato europeo: 1.234,56 → 1234.56
   if (/^\d{1,3}(\.\d{3})*(,\d+)?$/.test(str)) {
     str = str.replace(/\./g, '').replace(',', '.');
-  }
-  // Coma decimal simple: 12,5 → 12.5
-  else if (/^\d+,\d+$/.test(str)) {
+  } else if (/^\d+,\d+$/.test(str)) {
     str = str.replace(',', '.');
   }
 
@@ -75,7 +56,6 @@ export function getProductsByGroup(group = 'Todos') {
 
 export function filterByGroup() {
   let products = getProductsByGroup(state.selectedGroup || 'Todos');
-
   const term = (state.searchTerm || '').toLowerCase().trim();
   if (term) {
     products = products.filter(p =>
@@ -85,7 +65,6 @@ export function filterByGroup() {
       (p.unit  || '').toLowerCase().includes(term)
     );
   }
-
   return products;
 }
 
@@ -95,15 +74,11 @@ export function getAvailableGroups() {
 
 export function getTotalStock(product) {
   if (!product) return 0;
-
   if (product.stockByArea) {
     let total = 0;
-    AREA_KEYS.forEach(area => {
-      total += parseFloat(product.stockByArea[area] || 0);
-    });
+    AREA_KEYS.forEach(area => { total += parseFloat(product.stockByArea[area] || 0); });
     return parseFloat(total.toFixed(4));
   }
-
   return calcularStockTotal(product.id).total;
 }
 
@@ -113,7 +88,11 @@ export function addProduct(productData) {
     const m = String(p.id).match(/^PRD-(\d+)$/);
     if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
   });
-  const id = 'PRD-' + String(maxNum + 1).padStart(3, '0');
+
+  // Respetar ID manual si se proporcionó
+  const id = (productData.id && productData.id.trim())
+    ? productData.id.trim()
+    : 'PRD-' + String(maxNum + 1).padStart(3, '0');
 
   const product = {
     id,
@@ -123,12 +102,8 @@ export function addProduct(productData) {
     stockByArea: { almacen: 0, barra1: 0, barra2: 0 },
   };
 
-  if (productData.capacidadMl > 0) {
-    product.capacidadMl = parseFloat(productData.capacidadMl);
-  }
-  if (productData.pesoBotellaLlenaOz > 0) {
-    product.pesoBotellaLlenaOz = parseFloat(productData.pesoBotellaLlenaOz);
-  }
+  if (productData.capacidadMl > 0)        product.capacidadMl        = parseFloat(productData.capacidadMl);
+  if (productData.pesoBotellaLlenaOz > 0) product.pesoBotellaLlenaOz = parseFloat(productData.pesoBotellaLlenaOz);
 
   state.products.push(product);
   saveToLocalStorage();
@@ -139,35 +114,24 @@ export function addProduct(productData) {
 
 export function updateProduct(id, updates) {
   const product = state.products.find(p => p.id === id);
-  if (!product) {
-    showNotification('⚠️ Producto no encontrado');
-    return null;
-  }
+  if (!product) { showNotification('⚠️ Producto no encontrado'); return null; }
 
   if (updates.name  !== undefined) product.name  = String(updates.name).trim();
   if (updates.unit  !== undefined) product.unit  = String(updates.unit).trim();
   if (updates.group !== undefined) product.group = String(updates.group).trim();
-  if (updates.capacidadMl !== undefined) {
-    product.capacidadMl = parseFloat(updates.capacidadMl) || null;
-  }
-  if (updates.pesoBotellaLlenaOz !== undefined) {
-    product.pesoBotellaLlenaOz = parseFloat(updates.pesoBotellaLlenaOz) || null;
-  }
-  if (updates.stockByArea) {
-    product.stockByArea = { ...product.stockByArea, ...updates.stockByArea };
-  }
+  if (updates.capacidadMl !== undefined)        product.capacidadMl        = parseFloat(updates.capacidadMl) || null;
+  if (updates.pesoBotellaLlenaOz !== undefined) product.pesoBotellaLlenaOz = parseFloat(updates.pesoBotellaLlenaOz) || null;
+  if (updates.stockByArea) product.stockByArea = { ...product.stockByArea, ...updates.stockByArea };
 
   saveToLocalStorage();
+  showNotification(`✅ Producto "${product.name}" actualizado`);
   console.info('[Products] Producto actualizado:', id);
   return product;
 }
 
 export function deleteProduct(id) {
   const index = state.products.findIndex(p => p.id === id);
-  if (index === -1) {
-    showNotification('⚠️ Producto no encontrado');
-    return false;
-  }
+  if (index === -1) { showNotification('⚠️ Producto no encontrado'); return false; }
 
   const name = state.products[index].name;
   state.products.splice(index, 1);
@@ -182,10 +146,6 @@ export function deleteProduct(id) {
   return true;
 }
 
-// ═════════════════════════════════════════════════════════════
-// tieneConversion
-// ═════════════════════════════════════════════════════════════
-
 export function tieneConversion(product) {
   return !!(product && product.capacidadMl && product.capacidadMl > 0);
 }
@@ -199,11 +159,9 @@ export function calcularTotalConAbiertas(productId, area) {
   if (!product) return 0;
 
   const conteo = state.auditoriaConteo[productId]?.[area];
-  if (!conteo) {
-    return product.stockByArea?.[area] || 0;
-  }
+  if (!conteo) return product.stockByArea?.[area] || 0;
 
-  const enteras  = typeof conteo.enteras  === 'number' ? conteo.enteras  : 0;
+  const enteras  = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
   const abiertas = Array.isArray(conteo.abiertas) ? conteo.abiertas : [];
 
   if (abiertas.length === 0) return enteras;
@@ -211,9 +169,7 @@ export function calcularTotalConAbiertas(productId, area) {
   const pesoLlena = product.pesoBotellaLlenaOz || 0;
   const pesoVacia = PESO_BOTELLA_VACIA_OZ || 14.0;
 
-  if (pesoLlena <= pesoVacia) {
-    return enteras + (abiertas.length * 0.5);
-  }
+  if (pesoLlena <= pesoVacia) return enteras + (abiertas.length * 0.5);
 
   const contenidoLlena = pesoLlena - pesoVacia;
   let totalAbiertas = 0;
@@ -231,8 +187,7 @@ export function calcularTotalConAbiertas(productId, area) {
 export function calcularContenidoMl(productId, area) {
   const product = getProductById(productId);
   if (!product || !product.capacidadMl) return 0;
-  const totalUnidades = calcularTotalConAbiertas(productId, area);
-  return parseFloat((totalUnidades * product.capacidadMl).toFixed(2));
+  return parseFloat((calcularTotalConAbiertas(productId, area) * product.capacidadMl).toFixed(2));
 }
 
 export function calcularStockTotal(productId) {
@@ -247,15 +202,10 @@ export function calcularStockTotal(productId) {
 
   const product = getProductById(productId);
   const totalMl = product?.capacidadMl
-    ? parseFloat((total * product.capacidadMl).toFixed(2))
-    : 0;
+    ? parseFloat((total * product.capacidadMl).toFixed(2)) : 0;
 
   return { total: parseFloat(total.toFixed(4)), porArea, totalMl };
 }
-
-// ═════════════════════════════════════════════════════════════
-// MULTI-USUARIO
-// ═════════════════════════════════════════════════════════════
 
 export function calcularTotalMultiUsuario(productId, area) {
   const product = getProductById(productId);
@@ -273,9 +223,7 @@ export function calcularTotalMultiUsuario(productId, area) {
     if (typeof conteo === 'object' && conteo !== null) {
       const ent = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
       if (ent > maxEnteras) maxEnteras = ent;
-      if (Array.isArray(conteo.abiertas)) {
-        todasAbiertas = todasAbiertas.concat(conteo.abiertas);
-      }
+      if (Array.isArray(conteo.abiertas)) todasAbiertas = todasAbiertas.concat(conteo.abiertas);
     }
   });
 
@@ -284,9 +232,7 @@ export function calcularTotalMultiUsuario(productId, area) {
   const pesoLlena = product.pesoBotellaLlenaOz || 0;
   const pesoVacia = PESO_BOTELLA_VACIA_OZ || 14.0;
 
-  if (pesoLlena <= pesoVacia) {
-    return maxEnteras + (todasAbiertas.length * 0.5);
-  }
+  if (pesoLlena <= pesoVacia) return maxEnteras + (todasAbiertas.length * 0.5);
 
   const contenidoLlena = pesoLlena - pesoVacia;
   let totalAbiertas = 0;
@@ -307,35 +253,26 @@ export function calcularTotalMultiUsuario(productId, area) {
 
 export function syncStockByAreaFromConteo() {
   if (!state.inventarioConteo) return;
-
   let updated = 0;
 
   state.products.forEach(product => {
     const conteo = state.inventarioConteo[product.id];
     if (!conteo) return;
-
-    if (!product.stockByArea) {
-      product.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
-    }
+    if (!product.stockByArea) product.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
 
     AREA_KEYS.forEach(area => {
       if (conteo[area] !== undefined && conteo[area] !== null) {
         const valor = parseFloat(conteo[area]);
-        if (!isNaN(valor)) {
-          product.stockByArea[area] = valor;
-          updated++;
-        }
+        if (!isNaN(valor)) { product.stockByArea[area] = valor; updated++; }
       }
     });
   });
 
-  if (updated > 0) {
-    console.info(`[Products] syncStockByAreaFromConteo: ${updated} campos actualizados.`);
-  }
+  if (updated > 0) console.info(`[Products] syncStockByAreaFromConteo: ${updated} campos actualizados.`);
 }
 
 // ═════════════════════════════════════════════════════════════
-// handleFileImport() — Importación de PRODUCTOS desde Excel
+// handleFileImport — Importación de PRODUCTOS desde Excel
 // ═════════════════════════════════════════════════════════════
 
 export function handleFileImport(event) {
@@ -347,71 +284,45 @@ export function handleFileImport(event) {
 
   if (state.userRole !== 'admin') {
     showNotification('⛔ Solo el administrador puede importar productos');
-    fileInput.value = '';
-    return;
+    fileInput.value = ''; return;
   }
 
   const validExtensions = ['.xlsx', '.xls', '.csv'];
-  const fileName = file.name.toLowerCase();
-  const isValid  = validExtensions.some(ext => fileName.endsWith(ext));
-  if (!isValid) {
+  if (!validExtensions.some(ext => file.name.toLowerCase().endsWith(ext))) {
     showNotification('⚠️ Selecciona un archivo Excel (.xlsx, .xls, .csv)');
-    fileInput.value = '';
-    return;
+    fileInput.value = ''; return;
   }
 
   if (typeof window.XLSX === 'undefined' || !window.XLSX.read) {
     showNotification('❌ La librería XLSX no está cargada. Recarga la página.');
-    fileInput.value = '';
-    return;
+    fileInput.value = ''; return;
   }
 
   const reader = new FileReader();
-
-  reader.onerror = function () {
-    showNotification('❌ Error al leer el archivo');
-    fileInput.value = '';
-  };
+  reader.onerror = () => { showNotification('❌ Error al leer el archivo'); fileInput.value = ''; };
 
   reader.onload = function (e) {
     try {
-      const data     = new Uint8Array(e.target.result);
-      const workbook = window.XLSX.read(data, { type: 'array' });
+      const workbook = window.XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
 
-      if (!workbook.SheetNames?.length) {
-        showNotification('El archivo no contiene hojas válidas');
-        fileInput.value = ''; return;
-      }
-
+      if (!workbook.SheetNames?.length) { showNotification('El archivo no contiene hojas válidas'); fileInput.value = ''; return; }
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      if (!firstSheet) {
-        showNotification('La primera hoja del archivo está vacía');
-        fileInput.value = ''; return;
-      }
-
+      if (!firstSheet) { showNotification('La primera hoja está vacía'); fileInput.value = ''; return; }
       const jsonData = window.XLSX.utils.sheet_to_json(firstSheet);
-      if (!jsonData?.length) {
-        showNotification('El archivo no contiene datos válidos');
-        fileInput.value = ''; return;
-      }
+      if (!jsonData?.length) { showNotification('El archivo no contiene datos válidos'); fileInput.value = ''; return; }
 
       const columnMap = {
-        id:   ['ID', 'Id', 'id', 'Código', 'codigo'],
-        name: ['Producto', 'Nombre', 'Descripción', 'descripcion', 'producto',
-               'nombre', 'Name', 'name', 'PRODUCTO', 'NOMBRE'],
-        unit:  ['Unidad', 'unidad', 'Medida', 'medida', 'Unit', 'UNIDAD'],
-        group: ['Grupo', 'grupo', 'Categoría', 'categoria', 'Group', 'GRUPO'],
-        stock: ['Cantidad', 'cantidad', 'Stock', 'stock', 'Enteras', 'CANTIDAD'],
-        capacidadMl: ['CapacidadML', 'capacidadMl', 'CapacidadMl',
-                      'Capacidad_ML', 'CapML', 'capacidadML', 'capacidadml'],
-        pesoBotellaLlenaOz: ['PesoBotellaOz', 'pesoBotellaOz', 'PesoLlenaOz',
-                             'PesoOz', 'pesoBotellaLlenaOz', 'PesoBotellaLlenaOz'],
+        id:   ['ID','Id','id','Código','codigo'],
+        name: ['Producto','Nombre','Descripción','descripcion','producto','nombre','Name','name','PRODUCTO','NOMBRE'],
+        unit:  ['Unidad','unidad','Medida','medida','Unit','UNIDAD'],
+        group: ['Grupo','grupo','Categoría','categoria','Group','GRUPO'],
+        stock: ['Cantidad','cantidad','Stock','stock','Enteras','CANTIDAD'],
+        capacidadMl: ['CapacidadML','capacidadMl','CapacidadMl','Capacidad_ML','CapML','capacidadML','capacidadml'],
+        pesoBotellaLlenaOz: ['PesoBotellaOz','pesoBotellaOz','PesoLlenaOz','PesoOz','pesoBotellaLlenaOz','PesoBotellaLlenaOz'],
       };
 
       const findCol = (row, keys) => {
-        for (const key of keys) {
-          if (row[key] !== undefined && row[key] !== null && row[key] !== '') return row[key];
-        }
+        for (const key of keys) if (row[key] !== undefined && row[key] !== null && row[key] !== '') return row[key];
         const rowKeys = Object.keys(row);
         for (const key of keys) {
           const found = rowKeys.find(rk => rk.toLowerCase() === key.toLowerCase());
@@ -420,28 +331,22 @@ export function handleFileImport(event) {
         return undefined;
       };
 
-      const existingIds  = new Set(state.products.map(p => p.id));
+      const existingIds = new Set(state.products.map(p => p.id));
       let maxNum = 0;
-      state.products.forEach(p => {
-        const m = String(p.id).match(/^PRD-(\d+)$/);
-        if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
-      });
+      state.products.forEach(p => { const m = String(p.id).match(/^PRD-(\d+)$/); if (m) maxNum = Math.max(maxNum, parseInt(m[1],10)); });
       let nextNum = maxNum + 1;
 
       const toImport = [];
       const usedInBatch = new Set();
-      let skipped = 0;
 
       jsonData.forEach(row => {
-        const nameRaw = findCol(row, columnMap.name);
-        const name    = nameRaw !== undefined ? String(nameRaw).trim() : '';
-        if (!name) { skipped++; return; }
+        const name = (findCol(row, columnMap.name) !== undefined ? String(findCol(row, columnMap.name)).trim() : '');
+        if (!name) return;
 
         const rawId = findCol(row, columnMap.id);
         let id = rawId !== undefined ? String(rawId).trim() : '';
-
         if (!id || existingIds.has(id) || usedInBatch.has(id)) {
-          do { id = 'PRD-' + String(nextNum++).padStart(3, '0'); }
+          do { id = 'PRD-' + String(nextNum++).padStart(3,'0'); }
           while (existingIds.has(id) || usedInBatch.has(id));
         }
         usedInBatch.add(id);
@@ -449,27 +354,18 @@ export function handleFileImport(event) {
         const unit  = String(findCol(row, columnMap.unit)  ?? 'Unidad').trim();
         const group = String(findCol(row, columnMap.group) ?? 'General').trim();
         const stock = parseExcelNumber(findCol(row, columnMap.stock) ?? 0);
-
         const capRaw  = findCol(row, columnMap.capacidadMl);
-        const capacidadMl = capRaw !== undefined
-          ? (isNaN(parseFloat(capRaw)) ? null : parseFloat(capRaw)) : null;
-
         const pesoRaw = findCol(row, columnMap.pesoBotellaLlenaOz);
-        const pesoBotellaLlenaOz = pesoRaw !== undefined
-          ? (isNaN(parseFloat(pesoRaw)) ? null : parseFloat(pesoRaw)) : null;
+        const capacidadMl        = capRaw  !== undefined ? (isNaN(parseFloat(capRaw))  ? null : parseFloat(capRaw))  : null;
+        const pesoBotellaLlenaOz = pesoRaw !== undefined ? (isNaN(parseFloat(pesoRaw)) ? null : parseFloat(pesoRaw)) : null;
 
-        const product = { id, name, unit, group,
-          stockByArea: { almacen: stock, barra1: 0, barra2: 0 } };
+        const product = { id, name, unit, group, stockByArea: { almacen: stock, barra1: 0, barra2: 0 } };
         if (capacidadMl        > 0) product.capacidadMl        = capacidadMl;
         if (pesoBotellaLlenaOz > 0) product.pesoBotellaLlenaOz = pesoBotellaLlenaOz;
-
         toImport.push(product);
       });
 
-      if (!toImport.length) {
-        showNotification('⚠️ No se encontraron productos válidos. Verifica las columnas.');
-        fileInput.value = ''; return;
-      }
+      if (!toImport.length) { showNotification('⚠️ No se encontraron productos válidos.'); fileInput.value = ''; return; }
 
       state.products = state.products.concat(toImport);
 
@@ -484,20 +380,17 @@ export function handleFileImport(event) {
 
       if (state.syncEnabled && window._db) {
         import('./sync.js').then(m => {
-          if (typeof m._setLastLocalWriteTs === 'function') {
-            m._setLastLocalWriteTs(_importTs);
-          }
+          if (typeof m._setLastLocalWriteTs === 'function') m._setLastLocalWriteTs(_importTs);
           m.syncToCloud().catch(() => {});
         }).catch(() => {});
       }
 
-      import('./render.js').then(m => {
-        m.renderTab();
-        fileInput.value = '';
-      }).catch(() => { fileInput.value = ''; });
+      import('./render.js').then(m => { m.renderTab(); fileInput.value = ''; }).catch(() => { fileInput.value = ''; });
+
+      showNotification(`✅ ${toImport.length} productos importados`);
 
     } catch (error) {
-      showNotification('❌ Error al importar archivo: ' + error.message);
+      showNotification('❌ Error al importar: ' + error.message);
       console.error('[Import] Error:', error);
       fileInput.value = '';
     }
@@ -507,7 +400,7 @@ export function handleFileImport(event) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// importFullData()
+// importFullData — Importar estado completo desde JSON
 // ═════════════════════════════════════════════════════════════
 
 export function importFullData(event) {
@@ -515,61 +408,37 @@ export function importFullData(event) {
   if (!file) return;
   const fileInput = event.target;
 
-  if (state.userRole === 'user') {
-    showNotification('⛔ Solo el administrador puede importar datos completos');
-    fileInput.value = '';
-    return;
-  }
-
-  if (!file.name.toLowerCase().endsWith('.json')) {
-    showNotification('⚠️ Selecciona un archivo JSON de respaldo (.json)');
-    fileInput.value = '';
-    return;
-  }
+  if (state.userRole === 'user') { showNotification('⛔ Solo el administrador puede importar datos'); fileInput.value = ''; return; }
+  if (!file.name.toLowerCase().endsWith('.json')) { showNotification('⚠️ Selecciona un archivo JSON (.json)'); fileInput.value = ''; return; }
 
   const reader = new FileReader();
-
-  reader.onerror = () => {
-    showNotification('❌ Error al leer el archivo de respaldo');
-    fileInput.value = '';
-  };
+  reader.onerror = () => { showNotification('❌ Error al leer el archivo'); fileInput.value = ''; };
 
   reader.onload = function (e) {
     try {
       const data = JSON.parse(e.target.result);
+      if (!data || typeof data !== 'object') { showNotification('⚠️ Formato inválido'); fileInput.value = ''; return; }
 
-      if (!data || typeof data !== 'object') {
-        showNotification('⚠️ Formato de archivo inválido');
-        fileInput.value = ''; return;
-      }
-
-      if (Array.isArray(data.products))     state.products     = data.products;
-      if (Array.isArray(data.inventories))  state.inventories  = data.inventories;
-      if (Array.isArray(data.orders))       state.orders       = data.orders;
-      if (data.inventarioConteo)            state.inventarioConteo          = data.inventarioConteo;
-      if (data.auditoriaConteo)             state.auditoriaConteo           = data.auditoriaConteo;
-      if (data.auditoriaStatus)             state.auditoriaStatus           = data.auditoriaStatus;
-      if (data.auditoriaConteoPorUsuario)   state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
-      if (data.ajustes)                     state.ajustes                   = data.ajustes;
+      if (Array.isArray(data.products))          state.products                  = data.products;
+      if (Array.isArray(data.inventories))       state.inventories               = data.inventories;
+      if (Array.isArray(data.orders))            state.orders                    = data.orders;
+      if (data.inventarioConteo)                 state.inventarioConteo          = data.inventarioConteo;
+      if (data.auditoriaConteo)                  state.auditoriaConteo           = data.auditoriaConteo;
+      if (data.auditoriaStatus)                  state.auditoriaStatus           = data.auditoriaStatus;
+      if (data.auditoriaConteoPorUsuario)        state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
+      if (data.ajustes)                          state.ajustes                   = data.ajustes;
 
       syncStockByAreaFromConteo();
+      state.activeTab = 'inicio'; state.selectedGroup = 'Todos'; state.searchTerm = '';
       saveToLocalStorage();
 
-      const total = state.products.length;
-      showNotification(`✅ Datos importados: ${total} productos restaurados`);
-      console.info('[ImportFull] ✓ Estado restaurado desde JSON —', total, 'productos');
-
-      state.activeTab    = 'inicio';
-      state.selectedGroup = 'Todos';
-      state.searchTerm   = '';
-      saveToLocalStorage();
+      showNotification(`✅ Datos importados: ${state.products.length} productos restaurados`);
+      console.info('[ImportFull] ✓', state.products.length, 'productos');
 
       import('./render.js').then(m => m.renderTab()).catch(() => {});
-
       if (state.syncEnabled && window._db && navigator.onLine) {
         import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
       }
-
       fileInput.value = '';
 
     } catch (err) {
@@ -583,7 +452,7 @@ export function importFullData(event) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// ajustarProducto() — v2.3 CORREGIDO
+// ajustarProducto — FIX BUG-6: enviarNotificacionAjuste→enviarNotificacion
 // ═════════════════════════════════════════════════════════════
 
 export async function ajustarProducto(productId, area, nuevoValor, motivo = '') {
@@ -599,13 +468,14 @@ export async function ajustarProducto(productId, area, nuevoValor, motivo = '') 
 
   if (state.userRole === 'user') {
     try {
-      // FIX v2.3: era enviarNotificacionAjuste (no existe) → ahora enviarNotificacion
+      // FIX BUG-6: era 'enviarNotificacionAjuste' que NO existe.
+      // La función correcta en notificaciones.js es 'enviarNotificacion'.
       const { enviarNotificacion } = await import('./notificaciones.js');
       await enviarNotificacion({
         tipo:        'ajuste',
         mensaje:     `${state.auditCurrentUser?.userName || 'Usuario'} ajustó "${product.name}" [${area}]: ${valorAnterior} → ${nuevoValor}${motivo ? ' — ' + motivo : ''}`,
-        usuarioId:   state.currentUser?.uid || state.auditCurrentUser?.userId || 'anon',
-        usuarioName: state.currentUser?.email || state.auditCurrentUser?.userName || 'Anónimo',
+        usuarioId:   state.currentUser?.uid    || state.auditCurrentUser?.userId   || 'anon',
+        usuarioName: state.currentUser?.email  || state.auditCurrentUser?.userName || 'Anónimo',
         productoId:  productId,
         productoName: product.name,
         datos: { area, valorAnterior, nuevoValor, motivo, timestamp: Date.now() },
@@ -619,7 +489,7 @@ export async function ajustarProducto(productId, area, nuevoValor, motivo = '') 
 }
 
 // ═════════════════════════════════════════════════════════════
-// finalizarInventario()
+// finalizarInventario
 // ═════════════════════════════════════════════════════════════
 
 export function finalizarInventario() {
@@ -638,7 +508,6 @@ export function finalizarInventario() {
   };
 
   state.inventories.push(snapshot);
-
   state.inventarioConteo          = {};
   state.auditoriaConteo           = {};
   state.auditoriaConteoPorUsuario = {};
@@ -646,8 +515,7 @@ export function finalizarInventario() {
   state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
 
   saveToLocalStorage();
-  console.info('[Products] ✓ Inventario finalizado. Historial guardado:', snapshot.id);
+  console.info('[Products] ✓ Inventario finalizado:', snapshot.id);
   showNotification('✅ Inventario finalizado y guardado en historial');
-
   return snapshot;
 }

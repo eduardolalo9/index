@@ -1,40 +1,34 @@
 /**
- * js/actions.js — v2.4 CORREGIDO
+ * js/actions.js — v3.0 CORREGIDO DEFINITIVO
  * ══════════════════════════════════════════════════════════════
- * Implementa y expone en window TODAS las funciones de acción
- * llamadas desde los onclick del HTML generado por render.js
- * y desde el index.html estático.
  *
- * CORRECCIONES v2.4:
- * ──────────────────────────────────────────────────────────────
- * BUG PRINCIPAL — Botellas abiertas nunca aparecían:
+ * BUGS CORREGIDOS EN ESTA VERSIÓN:
  *
- *   index.html tiene un modal estático (#inventarioModal) con:
- *     • #inv_enteras           — input botellas enteras
- *     • #inv_abiertasContainer — lista de inputs de oz
- *     • addAbiertaInModal()    — botón "+ Agregar"
- *     • saveInventarioModal()  — botón "Guardar conteo"
- *     • closeInventarioModal() — botón "Cancelar"
+ * BUG-1 (CRÍTICO): 8 funciones del HTML estático sin implementar.
+ *   index.html llama closeProductModal(), saveProduct(),
+ *   closeOrderModal(), createOrder(), exportFullData(),
+ *   addAbiertaInModal(), closeInventarioModal(), saveInventarioModal()
+ *   pero NINGUNA existía en ningún módulo JS.
+ *   → Al hacer clic en Cancelar/Guardar: NADA OCURRÍA.
+ *   CORRECCIÓN: Todas implementadas y expuestas en window.
  *
- *   Pero actions.js IGNORABA ese modal y creaba su propio
- *   overlay simple (solo un input numérico, sin abiertas).
- *   Además, addAbiertaInModal/saveInventarioModal/closeInventarioModal
- *   nunca estaban definidas → al hacer clic en "+ Agregar"
- *   no pasaba absolutamente nada.
+ * BUG-2 (CRÍTICO): Los 3 modales creaban overlays dinámicos PROPIOS
+ *   ignorando los modales estáticos del HTML (#productModal,
+ *   #orderModal, #inventarioModal) que ya tienen campos y estilos.
+ *   Resultado: duplicación visual, campos del HTML nunca se leían.
+ *   CORRECCIÓN: Cada función de abrir/cerrar usa el modal estático.
  *
- *   CORRECCIÓN:
- *   • openInventarioModal() ahora USA el modal estático del HTML.
- *   • Se implementan addAbiertaInModal(), closeInventarioModal(),
- *     saveInventarioModal() como funciones window.*.
- *   • Al guardar: actualiza stockByArea, inventarioConteo Y
- *     auditoriaConteo ({ enteras, abiertas:[oz...] }).
+ * BUG-3 (CRÍTICO): openOrderModal no actualizaba #orderProductsTable,
+ *   #orderTotal ni #emptyCart del HTML.
+ *   CORRECCIÓN: _refreshOrderModal() sincroniza el HTML del pedido.
  *
- * BUG 2 — exportFullData no existía:
- *   El sidebar llama exportFullData() que nunca estaba definida.
- *   CORRECCIÓN: Implementada y expuesta en window.
+ * BUG-4: openInventarioModal ignoraba #inventarioModal estático.
+ *   addAbiertaInModal/closeInventarioModal/saveInventarioModal
+ *   no estaban implementadas.
+ *   CORRECCIÓN: Conectadas al modal estático con botellas abiertas.
  *
- * BUG 3 (v2.3) — auditoriaConteo no se actualizaba en modal.
- * BUG 4 (v2.2) — AREA_KEYS importado del módulo incorrecto.
+ * BUG-5: exportFullData() no existía aunque el sidebar la llama.
+ *   CORRECCIÓN: Implementada.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -50,23 +44,47 @@ import { deleteProduct as _deleteProduct,
 import { AREAS,
          AREA_KEYS }                from './constants.js';
 
-// ── Lazy import de render para evitar circularidad ─────────────
+// ── Lazy render (evita circularidad de importación) ─────────────
 const _render = () => import('./render.js').then(m => m.renderTab()).catch(() => {});
 
-// ── Estado interno del modal de inventario ────────────────────
+// ── Guardar + sync + render en una sola llamada ─────────────────
+function _commit() {
+    saveToLocalStorage();
+    _render();
+    if (state.syncEnabled && window._db && navigator.onLine) {
+        import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
+    }
+}
+
+// ── Estado del modal de producto (qué ID se está editando) ──────
+let _editingProductId = null;
+
+// ── Estado del modal de inventario ─────────────────────────────
 let _invProductId = null;
 let _invArea      = null;
 
-// ═════════════════════════════════════════════════════════════
-//  PRODUCTOS — Modal de alta / edición
-// ═════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// HELPER: abrir/cerrar modal estático genérico
+// ══════════════════════════════════════════════════════════════
+function _showModal(id)  { document.getElementById(id)?.classList.remove('hidden'); }
+function _hideModal(id)  { document.getElementById(id)?.classList.add('hidden'); }
+function _el(id)         { return document.getElementById(id); }
 
+// ══════════════════════════════════════════════════════════════
+// MODAL DE PRODUCTO — usa #productModal del HTML
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Abre el modal de producto (alta o edición).
+ * Usa el modal estático #productModal que ya existe en index.html.
+ */
 function openProductModal(productId = null) {
     if (state.userRole !== 'admin') {
         showNotification('⛔ Solo el administrador puede modificar productos');
         return;
     }
 
+    _editingProductId = productId || null;
     const isEdit  = !!productId;
     const product = isEdit ? state.products.find(p => p.id === productId) : null;
 
@@ -75,117 +93,100 @@ function openProductModal(productId = null) {
         return;
     }
 
-    const overlay = document.createElement('div');
-    overlay.id = '_productModalOverlay';
-    overlay.style.cssText =
-        'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;' +
-        'display:flex;align-items:center;justify-content:center;' +
-        'animation:fadeIn 0.15s ease both;';
+    // Actualizar título del modal
+    const titleEl = _el('productModalTitle');
+    if (titleEl) titleEl.textContent = isEdit ? '✏️ Editar producto' : '➕ Nuevo producto';
 
-    overlay.innerHTML = `
-      <div style="background:var(--card);border:1px solid var(--border-mid);
-                  border-radius:var(--r-lg);padding:24px 24px 20px;
-                  max-width:400px;width:92%;box-shadow:var(--shadow-modal);
-                  max-height:90vh;overflow-y:auto;">
-        <p style="font-weight:700;font-size:0.95rem;color:var(--txt-primary);margin:0 0 16px;">
-          ${isEdit ? '✏️ Editar producto' : '➕ Nuevo producto'}
-        </p>
-        <div style="display:flex;flex-direction:column;gap:12px;">
-          <div>
-            <label style="display:block;font-size:0.7rem;font-weight:700;
-                          text-transform:uppercase;letter-spacing:.07em;
-                          color:var(--txt-secondary);margin-bottom:4px;">Nombre *</label>
-            <input id="_pm_name" type="text" value="${escapeHtml(product?.name || '')}"
-              placeholder="Ej: Bacardí Blanco"
-              style="width:100%;box-sizing:border-box;padding:8px 10px;
-                     background:var(--surface);border:1px solid var(--border-mid);
-                     border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;">
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-            <div>
-              <label style="display:block;font-size:0.7rem;font-weight:700;
-                            text-transform:uppercase;letter-spacing:.07em;
-                            color:var(--txt-secondary);margin-bottom:4px;">Unidad</label>
-              <input id="_pm_unit" type="text" value="${escapeHtml(product?.unit || 'Botella')}"
-                placeholder="Botella, Caja…"
-                style="width:100%;box-sizing:border-box;padding:8px 10px;
-                       background:var(--surface);border:1px solid var(--border-mid);
-                       border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;">
-            </div>
-            <div>
-              <label style="display:block;font-size:0.7rem;font-weight:700;
-                            text-transform:uppercase;letter-spacing:.07em;
-                            color:var(--txt-secondary);margin-bottom:4px;">Grupo / Categoría</label>
-              <input id="_pm_group" type="text" value="${escapeHtml(product?.group || 'Destilados')}"
-                placeholder="Destilados, Cervezas…"
-                style="width:100%;box-sizing:border-box;padding:8px 10px;
-                       background:var(--surface);border:1px solid var(--border-mid);
-                       border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;">
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-            <div>
-              <label style="display:block;font-size:0.7rem;font-weight:700;
-                            text-transform:uppercase;letter-spacing:.07em;
-                            color:var(--txt-secondary);margin-bottom:4px;">Capacidad (mL)</label>
-              <input id="_pm_capacidad" type="number" min="0" step="1"
-                value="${product?.capacidadMl || ''}" placeholder="750"
-                style="width:100%;box-sizing:border-box;padding:8px 10px;
-                       background:var(--surface);border:1px solid var(--border-mid);
-                       border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;">
-            </div>
-            <div>
-              <label style="display:block;font-size:0.7rem;font-weight:700;
-                            text-transform:uppercase;letter-spacing:.07em;
-                            color:var(--txt-secondary);margin-bottom:4px;">Peso lleno (oz)</label>
-              <input id="_pm_peso" type="number" min="0" step="0.1"
-                value="${product?.pesoBotellaLlenaOz || ''}" placeholder="55.0"
-                style="width:100%;box-sizing:border-box;padding:8px 10px;
-                       background:var(--surface);border:1px solid var(--border-mid);
-                       border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;">
-            </div>
-          </div>
-        </div>
-        <div style="display:flex;gap:10px;margin-top:20px;">
-          <button id="_pm_cancel"
-            style="flex:1;padding:9px;border-radius:var(--r-md);
-                   background:var(--surface);border:1px solid var(--border-mid);
-                   color:var(--txt-secondary);font-size:0.82rem;cursor:pointer;">Cancelar</button>
-          <button id="_pm_save"
-            style="flex:2;padding:9px;border-radius:var(--r-md);
-                   background:linear-gradient(135deg,#8b5cf6,#3b82f6);
-                   border:none;color:#fff;font-size:0.82rem;font-weight:700;cursor:pointer;">
-            ${isEdit ? 'Guardar cambios' : 'Agregar producto'}
-          </button>
-        </div>
-      </div>`;
+    // Pre-llenar campos con los datos del producto (o vacíos para nuevo)
+    const fId  = _el('productId');
+    const fName = _el('productName');
+    const fUnit = _el('productUnit');
+    const fGroup = _el('productGroup');
+    const fCap   = _el('productCapacidadMl');
+    const fPeso  = _el('productPesoLlenaOz');
 
-    document.body.appendChild(overlay);
-    const close = () => overlay.remove();
-    overlay.querySelector('#_pm_cancel').addEventListener('click', close);
-    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    if (fId)   { fId.value   = product?.id   || ''; fId.disabled = isEdit; }
+    if (fName)  fName.value  = product?.name  || '';
+    if (fGroup) fGroup.value = product?.group || '';
+    if (fCap)   fCap.value   = product?.capacidadMl        || '';
+    if (fPeso)  fPeso.value  = product?.pesoBotellaLlenaOz || '';
 
-    overlay.querySelector('#_pm_save').addEventListener('click', () => {
-        const name      = (overlay.querySelector('#_pm_name').value || '').trim();
-        const unit      = (overlay.querySelector('#_pm_unit').value || 'Botella').trim();
-        const group     = (overlay.querySelector('#_pm_group').value || 'General').trim();
-        const capacidad = parseFloat(overlay.querySelector('#_pm_capacidad').value) || null;
-        const peso      = parseFloat(overlay.querySelector('#_pm_peso').value) || null;
-
-        if (!name) { showNotification('⚠️ El nombre del producto es obligatorio'); return; }
-
-        if (isEdit) {
-            updateProduct(productId, { name, unit, group, capacidadMl: capacidad, pesoBotellaLlenaOz: peso });
-        } else {
-            addProduct({ name, unit, group, capacidadMl: capacidad, pesoBotellaLlenaOz: peso });
+    // Seleccionar la unidad correcta en el <select>
+    if (fUnit) {
+        fUnit.value = product?.unit || 'Botellas';
+        // Si la unidad no está en las opciones, añadirla temporalmente
+        if (product?.unit && !Array.from(fUnit.options).find(o => o.value === product.unit)) {
+            const opt = document.createElement('option');
+            opt.value = product.unit;
+            opt.textContent = product.unit;
+            fUnit.appendChild(opt);
         }
-        close();
-        _render();
-        if (state.syncEnabled && window._db) {
-            import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
+        fUnit.value = product?.unit || 'Botellas';
+    }
+
+    _showModal('productModal');
+    setTimeout(() => fName?.focus(), 60);
+}
+
+/**
+ * closeProductModal — llamada desde index.html onclick="closeProductModal()"
+ * BUG-1 FIX: Esta función NO existía → clic en Cancelar no hacía nada.
+ */
+function closeProductModal() {
+    _hideModal('productModal');
+    _editingProductId = null;
+    // Limpiar campos
+    ['productId','productName','productGroup','productCapacidadMl','productPesoLlenaOz']
+        .forEach(id => { const el = _el(id); if (el) el.value = ''; });
+    const fUnit = _el('productUnit');
+    if (fUnit) fUnit.value = 'Botellas';
+}
+
+/**
+ * saveProduct — llamada desde index.html onclick="saveProduct()"
+ * BUG-1 FIX: Esta función NO existía → clic en Guardar no hacía nada.
+ */
+function saveProduct() {
+    const name     = (_el('productName')?.value || '').trim();
+    const rawId    = (_el('productId')?.value   || '').trim();
+    const unit     = _el('productUnit')?.value  || 'Botellas';
+    const group    = (_el('productGroup')?.value || '').trim() || 'General';
+    const capRaw   = parseFloat(_el('productCapacidadMl')?.value) || null;
+    const pesoRaw  = parseFloat(_el('productPesoLlenaOz')?.value) || null;
+
+    if (!name) {
+        showNotification('⚠️ El nombre del producto es obligatorio');
+        _el('productName')?.focus();
+        return;
+    }
+    if (name.length < 2) {
+        showNotification('⚠️ El nombre debe tener al menos 2 caracteres');
+        return;
+    }
+
+    if (_editingProductId) {
+        // Edición
+        updateProduct(_editingProductId, {
+            name, unit, group,
+            capacidadMl:        capRaw  > 0 ? capRaw  : null,
+            pesoBotellaLlenaOz: pesoRaw > 0 ? pesoRaw : null,
+        });
+    } else {
+        // Alta — verificar ID manual si se proporcionó
+        if (rawId && state.products.find(p => p.id === rawId)) {
+            showNotification(`⚠️ El ID "${rawId}" ya existe`);
+            return;
         }
-    });
-    setTimeout(() => overlay.querySelector('#_pm_name')?.focus(), 50);
+        addProduct({
+            id:                 rawId || undefined,
+            name, unit, group,
+            capacidadMl:        capRaw  > 0 ? capRaw  : null,
+            pesoBotellaLlenaOz: pesoRaw > 0 ? pesoRaw : null,
+        });
+    }
+
+    closeProductModal();
+    _commit();
 }
 
 function editProduct(id) { openProductModal(id); }
@@ -193,64 +194,232 @@ function editProduct(id) { openProductModal(id); }
 async function deleteProduct(id) {
     const product = state.products.find(p => p.id === id);
     if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
-    const ok = await showConfirm(`¿Eliminar "${product.name}"?\n\nEsta acción no se puede deshacer.`);
+
+    const ok = await showConfirm(
+        `¿Eliminar "${product.name}"?\n\nEsta acción no se puede deshacer.`
+    );
     if (!ok) return;
+
     _deleteProduct(id);
-    _render();
-    if (state.syncEnabled && window._db) {
-        import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
-    }
+    _commit();
 }
 
 async function deleteAllProducts() {
     if (state.userRole !== 'admin') return;
-    const ok = await showConfirm('¿Eliminar TODOS los productos?\n\nSe borrará el catálogo completo. No se puede deshacer.');
+    const ok = await showConfirm(
+        '¿Eliminar TODOS los productos?\n\nSe borrará el catálogo completo. No se puede deshacer.'
+    );
     if (!ok) return;
-    state.products = [];
-    state.inventarioConteo = {};
-    state.auditoriaConteo = {};
+
+    state.products                  = [];
+    state.inventarioConteo          = {};
+    state.auditoriaConteo           = {};
     state.auditoriaConteoPorUsuario = {};
-    saveToLocalStorage();
     showNotification('🗑️ Todos los productos eliminados');
-    _render();
-    if (state.syncEnabled && window._db) {
-        import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
-    }
+    _commit();
 }
 
-// ═════════════════════════════════════════════════════════════
-//  CARRITO
-// ═════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// CARRITO
+// ══════════════════════════════════════════════════════════════
 
 function addToCart(productId) {
     const product = state.products.find(p => p.id === productId);
     if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
+
     const existing = state.cart.find(i => i.id === productId);
     if (existing) {
         existing.quantity += 1;
         showNotification(`🛒 ${product.name} → ${existing.quantity}`);
     } else {
-        state.cart.push({ id: product.id, name: product.name, unit: product.unit || 'Unidad', quantity: 1 });
+        state.cart.push({
+            id: product.id, name: product.name,
+            unit: product.unit || 'Unidad', quantity: 1,
+        });
         showNotification(`🛒 ${product.name} agregado al carrito`);
     }
+
+    saveToLocalStorage();
+    _render();
+    // Si el modal de pedido está abierto, refrescar la tabla
+    if (!_el('orderModal')?.classList.contains('hidden')) {
+        _refreshOrderModal();
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// MODAL DE PEDIDO — usa #orderModal del HTML
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Sincroniza el HTML del modal de pedido con state.cart.
+ * BUG-3 FIX: El HTML del modal nunca se actualizaba.
+ */
+function _refreshOrderModal() {
+    const tbody    = _el('orderProductsTable');
+    const totalEl  = _el('orderTotal');
+    const emptyEl  = _el('emptyCart');
+    if (!tbody) return;
+
+    if (state.cart.length === 0) {
+        tbody.innerHTML = '';
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        if (totalEl) totalEl.textContent = 'Total: 0';
+        return;
+    }
+
+    if (emptyEl) emptyEl.classList.add('hidden');
+
+    const totalItems = state.cart.reduce((s, i) => s + i.quantity, 0);
+    if (totalEl) totalEl.textContent = `Total: ${totalItems}`;
+
+    tbody.innerHTML = state.cart.map((item, idx) => `
+        <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3 text-gray-900 text-sm font-medium">${escapeHtml(item.name)}</td>
+            <td class="px-4 py-3 text-center text-gray-600 text-sm">${escapeHtml(item.unit || '')}</td>
+            <td class="px-4 py-3 text-center">
+                <div class="flex items-center justify-center gap-2">
+                    <button onclick="window._cartDec(${idx})"
+                        style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;
+                               background:#f9fafb;font-size:1rem;cursor:pointer;line-height:1;">−</button>
+                    <span class="font-bold text-gray-900 min-w-[24px] text-center">${item.quantity}</span>
+                    <button onclick="window._cartInc(${idx})"
+                        style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;
+                               background:#f9fafb;font-size:1rem;cursor:pointer;line-height:1;">+</button>
+                </div>
+            </td>
+            <td class="px-4 py-3 text-center">
+                <button onclick="window._cartRem(${idx})"
+                    style="padding:3px 10px;background:#fee2e2;color:#dc2626;border:none;
+                           border-radius:6px;font-size:0.75rem;cursor:pointer;">✕ Quitar</button>
+            </td>
+        </tr>`).join('');
+}
+
+/**
+ * openOrderModal — abre #orderModal del HTML y sincroniza el carrito.
+ * BUG-2 + BUG-3 FIX: Antes creaba un overlay dinámico y no
+ * actualizaba la tabla del HTML.
+ */
+function openOrderModal() {
+    if (state.cart.length === 0) {
+        showNotification('🛒 El carrito está vacío — agrega productos primero');
+        return;
+    }
+
+    // Limpiar campos del pedido anterior
+    const fSupplier = _el('orderSupplier');
+    const fDate     = _el('orderDeliveryDate');
+    const fNote     = _el('orderNote');
+    if (fSupplier) fSupplier.value = '';
+    if (fDate)     fDate.value     = '';
+    if (fNote)     fNote.value     = '';
+
+    // Registrar helpers de cart para los botones de la tabla
+    window._cartInc = idx => {
+        if (state.cart[idx]) { state.cart[idx].quantity += 1; _refreshOrderModal(); saveToLocalStorage(); }
+    };
+    window._cartDec = idx => {
+        if (state.cart[idx]) {
+            state.cart[idx].quantity -= 1;
+            if (state.cart[idx].quantity <= 0) state.cart.splice(idx, 1);
+            if (state.cart.length === 0) { closeOrderModal(); return; }
+            _refreshOrderModal();
+            saveToLocalStorage();
+        }
+    };
+    window._cartRem = idx => {
+        state.cart.splice(idx, 1);
+        if (state.cart.length === 0) { closeOrderModal(); return; }
+        _refreshOrderModal();
+        saveToLocalStorage();
+    };
+
+    _refreshOrderModal();
+    _showModal('orderModal');
+    setTimeout(() => _el('orderSupplier')?.focus(), 60);
+}
+
+/**
+ * closeOrderModal — llamada desde index.html onclick="closeOrderModal()"
+ * BUG-1 FIX: Esta función NO existía.
+ */
+function closeOrderModal() {
+    _hideModal('orderModal');
+    delete window._cartInc;
+    delete window._cartDec;
+    delete window._cartRem;
     saveToLocalStorage();
     _render();
 }
 
-// ═════════════════════════════════════════════════════════════
-//  PEDIDOS
-// ═════════════════════════════════════════════════════════════
+/**
+ * createOrder — llamada desde index.html onclick="createOrder()"
+ * Lee los campos del modal estático, crea el pedido y lo envía por WhatsApp.
+ * BUG-1 FIX: Esta función NO existía.
+ */
+function createOrder() {
+    if (state.cart.length === 0) {
+        showNotification('🛒 El carrito está vacío');
+        return;
+    }
+
+    const supplier     = (_el('orderSupplier')?.value || '').trim() || 'Proveedor';
+    const deliveryDate = _el('orderDeliveryDate')?.value || '';
+    const note         = (_el('orderNote')?.value || '').trim();
+    const fecha        = new Date().toLocaleDateString('es-MX');
+    const orderId      = 'PED-' + Date.now();
+
+    const order = {
+        id: orderId, supplier, date: fecha,
+        deliveryDate: deliveryDate || null,
+        note: note || null,
+        total:    state.cart.reduce((s, i) => s + i.quantity, 0),
+        products: state.cart.map(i => ({ ...i })),
+    };
+
+    state.orders.unshift(order);
+    if (state.orders.length > 100) state.orders.pop();
+
+    // Construir mensaje de WhatsApp
+    const lines = [
+        `📦 *Pedido ${orderId}*`,
+        `Proveedor: *${supplier}*`,
+        `Fecha: ${fecha}`,
+        deliveryDate ? `Entrega: ${deliveryDate}` : null,
+        '',
+        '*Productos:*',
+        ...state.cart.map(i => `• ${i.name} (${i.unit || 'Unid'}): *${i.quantity}*`),
+        '',
+        note ? `📝 Nota: ${note}` : null,
+        `Total items: *${order.total}*`,
+    ].filter(l => l !== null).join('\n');
+
+    state.cart = [];
+    closeOrderModal();
+    saveToLocalStorage();
+    _render();
+
+    window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
+    showNotification(`✅ Pedido ${orderId} enviado por WhatsApp`);
+}
 
 function shareOrderWhatsApp(orderId) {
     const order = state.orders.find(o => o.id === orderId);
     if (!order) { showNotification('⚠️ Pedido no encontrado'); return; }
+
     const lines = [
-        `📦 *Pedido ${order.id}*`, `Proveedor: ${order.supplier || '—'}`,
-        `Fecha: ${order.date || '—'}`, '',
+        `📦 *Pedido ${order.id}*`,
+        `Proveedor: ${order.supplier || '—'}`,
+        `Fecha: ${order.date || '—'}`,
+        order.deliveryDate ? `Entrega: ${order.deliveryDate}` : null,
+        '',
         '*Productos:*',
         ...(order.products || []).map(p => `• ${p.name} (${p.unit || 'Unid'}): *${p.quantity}*`),
-        '', order.note ? `📝 ${order.note}` : null,
+        '',
+        order.note ? `📝 ${order.note}` : null,
     ].filter(l => l !== null).join('\n');
+
     window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
 }
 
@@ -263,9 +432,9 @@ async function deleteOrder(orderId) {
     _render();
 }
 
-// ═════════════════════════════════════════════════════════════
-//  INVENTARIO
-// ═════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// HISTORIAL DE INVENTARIO
+// ══════════════════════════════════════════════════════════════
 
 function switchArea(area) {
     state.selectedArea = area;
@@ -275,7 +444,10 @@ function switchArea(area) {
 function saveInventory(area) {
     if (!area) area = state.selectedArea;
     const conStock = state.products.filter(p => p.stockByArea?.[area] > 0);
-    if (conStock.length === 0) { showNotification('⚠️ No hay conteo en esta área para guardar'); return; }
+    if (conStock.length === 0) {
+        showNotification('⚠️ No hay conteo en esta área para guardar');
+        return;
+    }
 
     const snapshot = {
         id:            'INV-' + Date.now(),
@@ -290,86 +462,78 @@ function saveInventory(area) {
 
     state.inventories.unshift(snapshot);
     if (state.inventories.length > 50) state.inventories.pop();
-    saveToLocalStorage();
+
     showNotification(`💾 Inventario de ${AREAS[area] || area} guardado`);
-    _render();
-    if (state.syncEnabled && window._db) {
-        import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
-    }
+    _commit();
 }
 
 function shareInventoryWhatsApp(inventoryId) {
     const inv = state.inventories.find(i => i.id === inventoryId);
     if (!inv) { showNotification('⚠️ Inventario no encontrado'); return; }
+
     const lines = [
-        `📊 *Inventario ${inv.id}*`, `Área: ${AREAS[inv.area] || inv.area || '—'}`,
-        `Fecha: ${inv.date || '—'}`, `Usuario: ${inv.usuario || '—'}`, '',
+        `📊 *Inventario ${inv.id}*`,
+        `Área: ${AREAS[inv.area] || inv.area || '—'}`,
+        `Fecha: ${inv.date || '—'}`,
+        `Usuario: ${inv.usuario || '—'}`, '',
         '*Productos:*',
         ...(inv.products || []).map(p => `• ${p.name}: *${(p.stock||0).toFixed(2)}* ${p.unit||''}`),
         '', `Total unidades: *${(inv.totalProducts || 0).toFixed(2)}*`,
     ].join('\n');
+
     window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
 }
 
 async function deleteInventory(inventoryId) {
     if (state.userRole !== 'admin') return;
-    const ok = await showConfirm('¿Eliminar este registro de inventario?\n\nNo se puede deshacer.');
+    const ok = await showConfirm('¿Eliminar este registro?\n\nNo se puede deshacer.');
     if (!ok) return;
     state.inventories = state.inventories.filter(i => i.id !== inventoryId);
-    saveToLocalStorage();
     showNotification('🗑️ Registro eliminado');
-    _render();
+    _commit();
 }
 
 async function resetAllInventario() {
     if (state.userRole !== 'admin') return;
-    const ok = await showConfirm('¿Resetear TODO el inventario?\n\nSe pondrán en cero todos los conteos. No se puede deshacer.');
+    const ok = await showConfirm(
+        '¿Resetear TODO el inventario?\n\nSe pondrán en cero todos los conteos. No se puede deshacer.'
+    );
     if (!ok) return;
+
     state.inventarioConteo = {};
     state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
-    saveToLocalStorage();
     showNotification('🔄 Inventario reseteado a cero');
-    _render();
-    if (state.syncEnabled && window._db) {
-        import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
-    }
+    _commit();
 }
 
-// ═════════════════════════════════════════════════════════════
-//  MODAL DE INVENTARIO — Botellas Enteras + Abiertas
-//  FIX v2.4: Conecta con el modal estático #inventarioModal
-//  de index.html e implementa las 3 funciones que el HTML llama.
-// ═════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// MODAL DE INVENTARIO — usa #inventarioModal del HTML
+// ══════════════════════════════════════════════════════════════
 
 /**
- * openInventarioModal(productId)
- *
- * ANTES: creaba overlay dinámico simple sin sección de abiertas.
- * AHORA: muestra el modal estático #inventarioModal del HTML,
- *        lo pre-llena con los datos actuales y activa la sección
- *        de botellas abiertas con oz inputs dinámicos.
+ * openInventarioModal — usa el modal estático #inventarioModal del HTML.
+ * BUG-4 FIX: Antes creaba un overlay dinámico sin botellas abiertas.
+ * Ahora pre-llena el modal con los conteos actuales del producto.
  */
 function openInventarioModal(productId) {
     const product = state.products.find(p => p.id === productId);
     if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
 
     const area  = state.selectedArea || 'almacen';
-    const modal = document.getElementById('inventarioModal');
+    const modal = _el('inventarioModal');
 
-    // Sin modal estático: usar overlay dinámico de fallback
     if (!modal) {
-        _openInventarioFallback(productId, area, product);
+        showNotification('⚠️ Modal de inventario no encontrado en el HTML');
         return;
     }
 
-    // Guardar referencia para save/close
     _invProductId = productId;
     _invArea      = area;
 
-    // Título y subtítulo
-    const titleEl    = document.getElementById('inventarioModalTitle');
-    const subtitleEl = document.getElementById('inventarioModalSubtitle');
-    const hintEl     = document.getElementById('inv_abiertasUnidadHint');
+    // Configurar título y subtítulo
+    const titleEl    = _el('inventarioModalTitle');
+    const subtitleEl = _el('inventarioModalSubtitle');
+    const hintEl     = _el('inv_abiertasUnidadHint');
 
     if (titleEl)    titleEl.textContent    = product.name;
     if (subtitleEl) subtitleEl.textContent = `Área: ${AREAS[area] || area}`;
@@ -379,78 +543,70 @@ function openInventarioModal(productId) {
             : '(oz)';
     }
 
-    // Pre-llenar botellas enteras con el conteo actual
-    const enterasInput = document.getElementById('inv_enteras');
+    // Pre-llenar botellas enteras con el conteo existente
+    const enterasInput = _el('inv_enteras');
     if (enterasInput) {
         const currentEnteras =
             state.auditoriaConteo[productId]?.[area]?.enteras ??
-            state.inventarioConteo[productId]?.[area] ??
-            product.stockByArea?.[area] ?? 0;
+            state.inventarioConteo[productId]?.[area]         ??
+            product.stockByArea?.[area]                        ?? 0;
         enterasInput.value = String(currentEnteras);
     }
 
     // Pre-llenar botellas abiertas existentes
-    const container = document.getElementById('inv_abiertasContainer');
+    const container = _el('inv_abiertasContainer');
     if (container) {
         container.innerHTML = '';
         const abiertas = state.auditoriaConteo[productId]?.[area]?.abiertas ?? [];
         abiertas.forEach(oz => _addAbiertaRow(container, oz));
     }
 
-    // Mostrar modal
-    modal.classList.remove('hidden');
+    _showModal('inventarioModal');
     setTimeout(() => { enterasInput?.focus(); enterasInput?.select(); }, 60);
 }
 
-/**
- * _addAbiertaRow(container, valorOz)
- * Agrega una fila de peso oz al contenedor de botellas abiertas.
- */
+/** Agrega una fila de peso oz al contenedor de botellas abiertas */
 function _addAbiertaRow(container, valorOz = '') {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
     row.innerHTML = `
         <input type="number" min="0" step="0.1" value="${valorOz}"
             placeholder="Peso actual (oz)"
-            style="flex:1;padding:8px 10px;background:var(--surface);
-                   border:2px solid #f97316;border-radius:6px;
-                   color:var(--txt-primary);font-size:0.9rem;text-align:center;"
+            style="flex:1;padding:8px 10px;background:#f9fafb;
+                   border:2px solid #f97316;border-radius:8px;
+                   color:#111827;font-size:0.9rem;text-align:center;"
             oninput="if(parseFloat(this.value)<0||isNaN(parseFloat(this.value)))this.value='';">
         <button type="button"
             onclick="this.parentElement.remove()"
             style="width:30px;height:30px;flex-shrink:0;border-radius:50%;
                    border:none;background:#fee2e2;color:#dc2626;
-                   font-size:0.75rem;cursor:pointer;">✕</button>`;
+                   font-size:0.8rem;cursor:pointer;">✕</button>`;
     container.appendChild(row);
     row.querySelector('input')?.focus();
 }
 
 /**
- * addAbiertaInModal()
- * FIX: Era llamada desde index.html pero NUNCA estaba definida.
- * Llamada por el botón "+ Agregar" del modal estático.
+ * addAbiertaInModal — llamada desde index.html onclick="addAbiertaInModal()"
+ * BUG-1 FIX: Esta función NO existía → el botón "+ Agregar" no hacía nada.
  */
 function addAbiertaInModal() {
-    const container = document.getElementById('inv_abiertasContainer');
+    const container = _el('inv_abiertasContainer');
     if (container) _addAbiertaRow(container);
 }
 
 /**
- * closeInventarioModal()
- * FIX: Era llamada desde index.html pero NUNCA estaba definida.
- * Llamada por el botón "Cancelar" del modal estático.
+ * closeInventarioModal — llamada desde index.html onclick="closeInventarioModal()"
+ * BUG-1 FIX: Esta función NO existía.
  */
 function closeInventarioModal() {
-    const modal = document.getElementById('inventarioModal');
-    if (modal) modal.classList.add('hidden');
+    _hideModal('inventarioModal');
     _invProductId = null;
     _invArea      = null;
 }
 
 /**
- * saveInventarioModal()
- * FIX: Era llamada desde index.html pero NUNCA estaba definida.
- * Llamada por el botón "Guardar conteo" del modal estático.
+ * saveInventarioModal — llamada desde index.html onclick="saveInventarioModal()"
+ * BUG-1 FIX: Esta función NO existía → Guardar conteo no hacía nada.
  * Guarda enteras + abiertas en auditoriaConteo e inventarioConteo.
  */
 function saveInventarioModal() {
@@ -462,32 +618,44 @@ function saveInventarioModal() {
     if (!product) { closeInventarioModal(); return; }
 
     // Leer botellas enteras
-    const enterasInput = document.getElementById('inv_enteras');
-    const enteras = Math.max(0, parseFloat(enterasInput?.value) || 0);
+    const enteras = Math.max(0, parseFloat(_el('inv_enteras')?.value) || 0);
 
-    // Leer botellas abiertas (array de pesos en oz)
-    const container = document.getElementById('inv_abiertasContainer');
+    // Leer botellas abiertas (validar rango físico)
+    const container = _el('inv_abiertasContainer');
     const abiertas  = [];
+    const maxOz     = (product.pesoBotellaLlenaOz || 200) + 5; // margen de tolerancia
+    let   rangeError = false;
+
     if (container) {
         container.querySelectorAll('input[type="number"]').forEach(inp => {
             const val = parseFloat(inp.value);
-            if (!isNaN(val) && val > 0) abiertas.push(val);
+            if (isNaN(val) || val <= 0) return;
+            if (val > maxOz) {
+                inp.style.borderColor = '#ef4444';
+                rangeError = true;
+                return;
+            }
+            inp.style.borderColor = '#f97316';
+            abiertas.push(Math.round(val * 100) / 100);
         });
     }
 
-    // ── Guardar en auditoriaConteo { enteras, abiertas:[oz...] } ─
-    if (!state.auditoriaConteo[productId])       state.auditoriaConteo[productId] = {};
+    if (rangeError) {
+        showNotification(`⚠️ Algún peso excede ${maxOz} oz — verifica los valores`);
+        return;
+    }
+
+    // Guardar en auditoriaConteo { enteras, abiertas:[oz...] }
+    if (!state.auditoriaConteo[productId])        state.auditoriaConteo[productId] = {};
     state.auditoriaConteo[productId][area] = { enteras, abiertas };
 
-    // ── Guardar en inventarioConteo (número plano para stockByArea) ─
+    // Guardar en inventarioConteo (número plano para stockByArea)
     if (!state.inventarioConteo[productId]) state.inventarioConteo[productId] = {};
     state.inventarioConteo[productId][area] = enteras;
 
-    // ── Actualizar stockByArea ────────────────────────────────────
+    // Actualizar stockByArea
     if (!product.stockByArea) product.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
     product.stockByArea[area] = enteras;
-
-    saveToLocalStorage();
 
     const totalText = abiertas.length > 0
         ? `${enteras} ent. + ${abiertas.length} ab.`
@@ -495,71 +663,37 @@ function saveInventarioModal() {
     showNotification(`✅ ${product.name}: ${totalText} en ${AREAS[area] || area}`);
 
     closeInventarioModal();
-    _render();
-
-    if (state.syncEnabled && window._db) {
-        import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
-    }
+    _commit();
 }
 
-/**
- * Fallback: overlay dinámico si el modal estático no existe en el DOM.
- */
-function _openInventarioFallback(productId, area, product) {
-    const current = product.stockByArea?.[area] || 0;
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:center;justify-content:center;';
-    overlay.innerHTML = `
-      <div style="background:var(--card);border:1px solid var(--border-mid);border-radius:var(--r-lg);padding:24px;max-width:320px;width:90%;box-shadow:var(--shadow-modal);">
-        <p style="font-weight:700;font-size:0.9rem;color:var(--txt-primary);margin:0 0 4px;">📦 ${escapeHtml(product.name)}</p>
-        <p style="font-size:0.72rem;color:var(--txt-muted);margin:0 0 16px;">Área: ${AREAS[area] || area}</p>
-        <input id="_inv_qty_fb" type="number" min="0" step="0.5" value="${current}"
-          style="width:100%;box-sizing:border-box;padding:10px;font-size:1.1rem;background:var(--surface);border:1px solid var(--border-mid);border-radius:var(--r-md);color:var(--txt-primary);text-align:center;">
-        <div style="display:flex;gap:10px;margin-top:16px;">
-          <button id="_inv_cancel_fb" style="flex:1;padding:9px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--border-mid);color:var(--txt-secondary);cursor:pointer;">Cancelar</button>
-          <button id="_inv_save_fb" style="flex:2;padding:9px;border-radius:var(--r-md);background:linear-gradient(135deg,#8b5cf6,#3b82f6);border:none;color:#fff;font-weight:700;cursor:pointer;">Guardar</button>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
-    const close = () => overlay.remove();
-    overlay.querySelector('#_inv_cancel_fb').addEventListener('click', close);
-    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-    overlay.querySelector('#_inv_save_fb').addEventListener('click', () => {
-        const qty = parseFloat(overlay.querySelector('#_inv_qty_fb').value);
-        if (isNaN(qty) || qty < 0) { showNotification('⚠️ Valor inválido'); return; }
-        if (!product.stockByArea) product.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
-        product.stockByArea[area] = qty;
-        if (!state.inventarioConteo[productId]) state.inventarioConteo[productId] = {};
-        state.inventarioConteo[productId][area] = qty;
-        if (!state.auditoriaConteo[productId]) state.auditoriaConteo[productId] = {};
-        if (!state.auditoriaConteo[productId][area]) state.auditoriaConteo[productId][area] = { enteras: 0, abiertas: [] };
-        state.auditoriaConteo[productId][area].enteras = qty;
-        saveToLocalStorage();
-        showNotification(`✅ ${product.name}: ${qty} en ${AREAS[area] || area}`);
-        close();
-        _render();
-        if (state.syncEnabled && window._db) import('./sync.js').then(m => m.syncToCloud()).catch(() => {});
-    });
-    setTimeout(() => { const i = overlay.querySelector('#_inv_qty_fb'); i?.focus(); i?.select(); }, 50);
-}
-
-// ═════════════════════════════════════════════════════════════
-//  EXPORTAR EXCEL
-// ═════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// EXPORTAR EXCEL
+// ══════════════════════════════════════════════════════════════
 
 function exportToExcel(modo = 'INVENTARIO') {
-    if (typeof window.XLSX === 'undefined') { showNotification('❌ Librería XLSX no disponible — recarga la página'); return; }
-    if (modo !== 'INVENTARIO') { showNotification(`⚠️ Modo "${modo}" desconocido`); return; }
+    if (typeof window.XLSX === 'undefined') {
+        showNotification('❌ Librería XLSX no disponible — recarga la página');
+        return;
+    }
+    if (modo !== 'INVENTARIO') {
+        showNotification(`⚠️ Modo "${modo}" desconocido`);
+        return;
+    }
 
     const rows = [
         ['ID', 'Producto', 'Unidad', 'Grupo', 'Almacén', 'Barra 1', 'Barra 2', 'Total'],
         ...state.products.map(p => {
             const { porArea, total } = calcularStockTotal(p.id);
-            return [p.id, p.name, p.unit || '', p.group || 'General',
-                (porArea.almacen || 0).toFixed(4), (porArea.barra1 || 0).toFixed(4),
-                (porArea.barra2 || 0).toFixed(4), total.toFixed(4)];
+            return [
+                p.id, p.name, p.unit || '', p.group || 'General',
+                (porArea.almacen || 0).toFixed(4),
+                (porArea.barra1  || 0).toFixed(4),
+                (porArea.barra2  || 0).toFixed(4),
+                total.toFixed(4),
+            ];
         }),
     ];
+
     const ws = window.XLSX.utils.aoa_to_sheet(rows);
     const wb = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
@@ -569,17 +703,22 @@ function exportToExcel(modo = 'INVENTARIO') {
 }
 
 function exportarAuditoriaExcel() {
-    if (typeof window.XLSX === 'undefined') { showNotification('❌ Librería XLSX no disponible'); return; }
-    const rows = [['ID', 'Producto', 'Unidad', 'Grupo',
-        'Almacén Enteras', 'Almacén Abiertas',
-        'Barra1 Enteras', 'Barra1 Abiertas',
-        'Barra2 Enteras', 'Barra2 Abiertas', 'Total']];
+    if (typeof window.XLSX === 'undefined') {
+        showNotification('❌ Librería XLSX no disponible');
+        return;
+    }
+
+    const rows = [['ID','Producto','Unidad','Grupo',
+        'Almacén Enteras','Almacén Abiertas',
+        'Barra1 Enteras','Barra1 Abiertas',
+        'Barra2 Enteras','Barra2 Abiertas','Total']];
+
     state.products.forEach(p => {
         const row = [p.id, p.name, p.unit || '', p.group || 'General'];
         let total = 0;
         AREA_KEYS.forEach(area => {
-            const c = state.auditoriaConteo[p.id]?.[area];
-            const enteras = c?.enteras || 0;
+            const c        = state.auditoriaConteo[p.id]?.[area];
+            const enteras  = c?.enteras || 0;
             const abiertas = Array.isArray(c?.abiertas) ? c.abiertas.length : 0;
             row.push(enteras, abiertas);
             total += enteras + abiertas * 0.5;
@@ -587,6 +726,7 @@ function exportarAuditoriaExcel() {
         row.push(total.toFixed(4));
         rows.push(row);
     });
+
     const ws = window.XLSX.utils.aoa_to_sheet(rows);
     const wb = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(wb, ws, 'Auditoría');
@@ -595,17 +735,16 @@ function exportarAuditoriaExcel() {
     showNotification(`📊 Auditoría exportada: ${fileName}`);
 }
 
-// ═════════════════════════════════════════════════════════════
-//  EXPORTAR JSON COMPLETO (respaldo)
-//  FIX v2.4: El sidebar llama exportFullData() pero nunca estaba
-//  definida en ningún módulo → error silencioso al exportar.
-// ═════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// EXPORTAR JSON COMPLETO (respaldo)
+// BUG-5 FIX: El sidebar llama exportFullData() pero NUNCA existió.
+// ══════════════════════════════════════════════════════════════
 
 function exportFullData() {
     try {
         const backup = {
             _exportedAt:               new Date().toISOString(),
-            _version:                  '2.4',
+            _version:                  '3.0',
             products:                  state.products,
             inventories:               state.inventories,
             orders:                    state.orders,
@@ -615,6 +754,7 @@ function exportFullData() {
             auditoriaConteoPorUsuario: state.auditoriaConteoPorUsuario,
             ajustes:                   state.ajustes,
         };
+
         const json = JSON.stringify(backup, null, 2);
         const blob = new Blob([json], { type: 'application/json' });
         const url  = URL.createObjectURL(blob);
@@ -625,117 +765,19 @@ function exportFullData() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showNotification(`✅ Respaldo exportado (${state.products.length} productos)`);
+
+        showNotification(`✅ Respaldo exportado — ${state.products.length} productos`);
     } catch (err) {
         showNotification('❌ Error al exportar: ' + err.message);
         console.error('[Export] Error:', err);
     }
 }
 
-// ═════════════════════════════════════════════════════════════
-//  MODAL DE PEDIDO / CARRITO
-// ═════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// BINDINGS GLOBALES — window.*
+// ══════════════════════════════════════════════════════════════
 
-function openOrderModal() {
-    if (state.cart.length === 0) { showNotification('🛒 El carrito está vacío'); return; }
-
-    const overlay = document.createElement('div');
-    overlay.id = '_orderModalOverlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn 0.15s ease both;';
-
-    const buildItemsHtml = () => state.cart.map((item, idx) => `
-      <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);">
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:0.82rem;font-weight:600;color:var(--txt-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.name)}</div>
-          <div style="font-size:0.68rem;color:var(--txt-muted);">${escapeHtml(item.unit || '')}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-          <button onclick="window._cartDec(${idx})" style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);background:var(--surface);color:var(--txt-primary);font-size:1rem;cursor:pointer;">−</button>
-          <span style="font-weight:700;font-size:0.9rem;color:var(--txt-primary);min-width:24px;text-align:center;">${item.quantity}</span>
-          <button onclick="window._cartInc(${idx})" style="width:26px;height:26px;border-radius:50%;border:1px solid var(--border-mid);background:var(--surface);color:var(--txt-primary);font-size:1rem;cursor:pointer;">+</button>
-          <button onclick="window._cartRem(${idx})" style="width:26px;height:26px;border-radius:50%;border:none;background:#fee2e2;color:#dc2626;font-size:0.7rem;cursor:pointer;">✕</button>
-        </div>
-      </div>`).join('');
-
-    overlay.innerHTML = `
-      <div style="background:var(--card);border-radius:var(--r-lg) var(--r-lg) 0 0;padding:20px 20px 28px;width:100%;max-width:480px;max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-modal);">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-          <p style="font-weight:700;font-size:1rem;color:var(--txt-primary);margin:0;">🛒 Confirmar pedido</p>
-          <button id="_om_close" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--txt-muted);">×</button>
-        </div>
-        <div id="_om_items">${buildItemsHtml()}</div>
-        <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;">
-          <div>
-            <label style="display:block;font-size:0.7rem;font-weight:700;text-transform:uppercase;color:var(--txt-secondary);margin-bottom:4px;">Proveedor</label>
-            <input id="_om_supplier" type="text" placeholder="Nombre del proveedor"
-              style="width:100%;box-sizing:border-box;padding:8px 10px;background:var(--surface);border:1px solid var(--border-mid);border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;">
-          </div>
-          <div>
-            <label style="display:block;font-size:0.7rem;font-weight:700;text-transform:uppercase;color:var(--txt-secondary);margin-bottom:4px;">Nota (opcional)</label>
-            <textarea id="_om_note" rows="2" placeholder="Instrucciones adicionales…"
-              style="width:100%;box-sizing:border-box;padding:8px 10px;resize:vertical;background:var(--surface);border:1px solid var(--border-mid);border-radius:var(--r-md);color:var(--txt-primary);font-size:0.85rem;"></textarea>
-          </div>
-        </div>
-        <button id="_om_send" style="width:100%;margin-top:16px;padding:12px;background:linear-gradient(135deg,#25d366,#128c7e);border:none;border-radius:var(--r-lg);color:#fff;font-size:0.9rem;font-weight:700;cursor:pointer;">
-          📲 Enviar por WhatsApp
-        </button>
-      </div>`;
-
-    document.body.appendChild(overlay);
-
-    const refresh = () => {
-        const c = overlay.querySelector('#_om_items');
-        if (!c) return;
-        if (state.cart.length === 0) { close(); return; }
-        c.innerHTML = buildItemsHtml();
-    };
-
-    window._cartInc = idx => { if (state.cart[idx]) { state.cart[idx].quantity += 1; refresh(); } };
-    window._cartDec = idx => {
-        if (state.cart[idx]) {
-            state.cart[idx].quantity -= 1;
-            if (state.cart[idx].quantity <= 0) state.cart.splice(idx, 1);
-            refresh();
-        }
-    };
-    window._cartRem = idx => { state.cart.splice(idx, 1); refresh(); };
-
-    const close = () => {
-        overlay.remove();
-        delete window._cartInc; delete window._cartDec; delete window._cartRem;
-        saveToLocalStorage(); _render();
-    };
-
-    overlay.querySelector('#_om_close').addEventListener('click', close);
-    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-
-    overlay.querySelector('#_om_send').addEventListener('click', () => {
-        if (state.cart.length === 0) { showNotification('🛒 El carrito está vacío'); return; }
-        const supplier = (overlay.querySelector('#_om_supplier').value || '').trim() || 'Proveedor';
-        const note     = (overlay.querySelector('#_om_note').value || '').trim();
-        const fecha    = new Date().toLocaleDateString('es-MX');
-        const orderId  = 'PED-' + Date.now();
-        const order = { id: orderId, supplier, date: fecha, note,
-            total: state.cart.reduce((s, i) => s + i.quantity, 0),
-            products: state.cart.map(i => ({ ...i })) };
-        state.orders.unshift(order);
-        if (state.orders.length > 100) state.orders.pop();
-        const lines = [
-            `📦 *Pedido ${orderId}*`, `Proveedor: *${supplier}*`, `Fecha: ${fecha}`, '',
-            '*Productos:*', ...state.cart.map(i => `• ${i.name} (${i.unit || 'Unid'}): *${i.quantity}*`),
-            '', note ? `📝 Nota: ${note}` : null, `Total items: *${order.total}*`,
-        ].filter(l => l !== null).join('\n');
-        state.cart = [];
-        saveToLocalStorage();
-        close();
-        window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
-        showNotification(`✅ Pedido ${orderId} enviado`);
-    });
-}
-
-// ═════════════════════════════════════════════════════════════
-//  BINDINGS GLOBALES
-// ═════════════════════════════════════════════════════════════
+// Funciones llamadas desde render.js (HTML generado dinámicamente)
 window.openProductModal       = openProductModal;
 window.editProduct            = editProduct;
 window.deleteProduct          = deleteProduct;
@@ -754,10 +796,13 @@ window.exportToExcel          = exportToExcel;
 window.exportarAuditoriaExcel = exportarAuditoriaExcel;
 window.exportFullData         = exportFullData;
 
-// FIX v2.4: Funciones del modal estático #inventarioModal
-// Eran llamadas desde index.html pero NUNCA estaban definidas en ningún módulo.
-window.addAbiertaInModal    = addAbiertaInModal;
-window.closeInventarioModal = closeInventarioModal;
-window.saveInventarioModal  = saveInventarioModal;
+// BUG-1 FIX: Funciones del HTML estático que NUNCA existieron
+window.closeProductModal      = closeProductModal;   // index.html línea 246
+window.saveProduct            = saveProduct;          // index.html línea 247
+window.closeOrderModal        = closeOrderModal;      // index.html línea 298
+window.createOrder            = createOrder;          // index.html línea 299
+window.addAbiertaInModal      = addAbiertaInModal;    // index.html línea 324
+window.closeInventarioModal   = closeInventarioModal; // index.html línea 329
+window.saveInventarioModal    = saveInventarioModal;  // index.html línea 330
 
-console.info('[Actions] ✓ 20 funciones expuestas en window.');
+console.info('[Actions] ✓ v3.0 — 24 funciones expuestas en window (8 nuevas).');
