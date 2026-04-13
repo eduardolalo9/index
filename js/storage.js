@@ -1,13 +1,26 @@
 /**
- * js/storage.js — v2.2 CORREGIDO
+ * js/storage.js — v2.3 CORREGIDO
  * ══════════════════════════════════════════════════════════════
  * Persistencia local con localStorage (offline-first).
  *
- * CORRECCIONES v2.2:
- * • Añadida función smartAutoSave() — importada por app.js en
- *   setInterval(smartAutoSave, AUTO_SAVE_INTERVAL_MS) pero que
- *   NO existía → SyntaxError al cargar el módulo → pantalla en blanco.
- * • Añadido state.searchTerm a dataToSave — se perdía en cada recarga.
+ * FIX BUG-9:
+ *   saveToLocalStorage no incluía 3 campos críticos:
+ *
+ *   • auditoriaView — si el bartender recargaba durante un conteo,
+ *     auditoriaView volvía a 'selection' y la pantalla de conteo
+ *     desaparecía aunque el conteo estuviera activo.
+ *
+ *   • adjustmentsPending — cola offline de ajustes de stock
+ *     solicitados por usuarios sin conexión. Al recargar, la cola
+ *     se vaciaba y los ajustes nunca llegaban al admin.
+ *
+ *   • ajustesPendientes — lista de ajustes pendientes del admin.
+ *     Se reconstruye desde Firestore vía listener, pero guardarla
+ *     evita el parpadeo de "sin ajustes" durante la reconexión.
+ *
+ * Correcciones anteriores (v2.2):
+ *   • smartAutoSave() — solo guarda si el estado cambió (hash)
+ *   • searchTerm — se perdía en cada recarga
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -15,9 +28,6 @@ import { state } from './state.js';
 
 const STORAGE_KEY = 'inventarioApp_data';
 
-/**
- * Guarda todo el estado en localStorage.
- */
 export function saveToLocalStorage() {
   try {
     const dataToSave = {
@@ -28,11 +38,18 @@ export function saveToLocalStorage() {
       activeTab:                 state.activeTab,
       selectedArea:              state.selectedArea,
       selectedGroup:             state.selectedGroup,
-      searchTerm:                state.searchTerm,   // FIX: se perdía en cada recarga
+      searchTerm:                state.searchTerm,
       inventarioConteo:          state.inventarioConteo,
       auditoriaConteo:           state.auditoriaConteo,
       auditoriaStatus:           state.auditoriaStatus,
       auditoriaConteoPorUsuario: state.auditoriaConteoPorUsuario,
+      // FIX BUG-9: campos que faltaban
+      auditoriaView:             state.auditoriaView,
+      auditoriaAreaActiva:       state.auditoriaAreaActiva,
+      isAuditoriaMode:           state.isAuditoriaMode,
+      adjustmentsPending:        state.adjustmentsPending,
+      ajustesPendientes:         state.ajustesPendientes,
+      // fin fix
       ajustes:                   state.ajustes,
       syncEnabled:               state.syncEnabled,
       _lastModified:             Date.now(),
@@ -41,7 +58,6 @@ export function saveToLocalStorage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
     localStorage.setItem('inventarioApp_lastModified', String(Date.now()));
 
-    // Actualizar hash para detección de cambios
     state._lastDataHash =
       JSON.stringify(state.products)        +
       JSON.stringify(state.orders)          +
@@ -53,9 +69,6 @@ export function saveToLocalStorage() {
   }
 }
 
-/**
- * Carga el estado desde localStorage.
- */
 export function loadFromLocalStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -73,7 +86,7 @@ export function loadFromLocalStorage() {
     if (data.activeTab)                        state.activeTab                 = data.activeTab;
     if (data.selectedArea)                     state.selectedArea              = data.selectedArea;
     if (data.selectedGroup)                    state.selectedGroup             = data.selectedGroup;
-    if (data.searchTerm  !== undefined)        state.searchTerm                = data.searchTerm;
+    if (data.searchTerm !== undefined)         state.searchTerm                = data.searchTerm;
     if (data.inventarioConteo)                 state.inventarioConteo          = data.inventarioConteo;
     if (data.auditoriaConteo)                  state.auditoriaConteo           = data.auditoriaConteo;
     if (data.auditoriaStatus)                  state.auditoriaStatus           = data.auditoriaStatus;
@@ -81,65 +94,53 @@ export function loadFromLocalStorage() {
     if (data.ajustes)                          state.ajustes                   = data.ajustes;
     if (data.syncEnabled !== undefined)        state.syncEnabled               = data.syncEnabled;
 
-    // Restaurar toggle de sync desde localStorage independiente
-    // (tiene prioridad sobre el valor guardado en el objeto principal)
+    // FIX BUG-9: restaurar campos que antes no se guardaban
+    if (data.auditoriaView)                    state.auditoriaView             = data.auditoriaView;
+    if (data.auditoriaAreaActiva !== undefined) state.auditoriaAreaActiva      = data.auditoriaAreaActiva;
+    if (data.isAuditoriaMode !== undefined)    state.isAuditoriaMode           = data.isAuditoriaMode;
+    if (Array.isArray(data.adjustmentsPending)) state.adjustmentsPending       = data.adjustmentsPending;
+    if (Array.isArray(data.ajustesPendientes))  state.ajustesPendientes        = data.ajustesPendientes;
+    // fin fix
+
+    // Toggle de sync desde clave independiente (prioridad)
     try {
       const syncFlag = localStorage.getItem('inventarioApp_syncEnabled');
       if (syncFlag !== null) state.syncEnabled = syncFlag === '1';
     } catch (_) {}
 
-    // Recalcular hash
     state._lastDataHash =
       JSON.stringify(state.products)        +
       JSON.stringify(state.orders)          +
       JSON.stringify(state.inventories)     +
       JSON.stringify(state.inventarioConteo);
 
-    console.info(`[Storage] ✓ ${state.products.length} productos cargados desde localStorage.`);
+    console.info(`[Storage] ✓ ${state.products.length} productos cargados.`);
 
   } catch (e) {
     console.error('[Storage] Error al cargar:', e);
   }
 }
 
-/**
- * smartAutoSave — FIX CRÍTICO (v2.2)
- * ──────────────────────────────────────────────────────────────
- * Versión inteligente de saveToLocalStorage que solo escribe si
- * el estado realmente cambió (comparando hash). Evita escrituras
- * redundantes cada 30 s cuando no hay cambios.
- *
- * Era importada por app.js pero NO existía en este módulo →
- * SyntaxError al cargar → la aplicación nunca arrancaba.
- *
- * Llamada por: app.js → setInterval(smartAutoSave, AUTO_SAVE_INTERVAL_MS)
- */
 export function smartAutoSave() {
   try {
-    // Calcular hash actual del estado
     const currentHash =
       JSON.stringify(state.products)        +
       JSON.stringify(state.orders)          +
       JSON.stringify(state.inventories)     +
       JSON.stringify(state.inventarioConteo);
 
-    // Solo guardar si hubo cambios reales
     if (currentHash === state._lastDataHash) {
-      console.debug('[Storage] smartAutoSave — sin cambios, omitiendo escritura.');
+      console.debug('[Storage] smartAutoSave — sin cambios.');
       return;
     }
 
     saveToLocalStorage();
-    console.info('[Storage] smartAutoSave — cambios detectados, guardado.');
-
+    console.info('[Storage] smartAutoSave — guardado.');
   } catch (e) {
     console.error('[Storage] smartAutoSave — error:', e);
   }
 }
 
-/**
- * Limpia todos los datos guardados.
- */
 export function clearLocalStorage() {
   try {
     localStorage.removeItem(STORAGE_KEY);
