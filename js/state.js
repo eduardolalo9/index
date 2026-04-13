@@ -2,11 +2,18 @@
  * js/state.js — v2.4 DEFINITIVO
  * ══════════════════════════════════════════════════════════════
  * Estado global centralizado de la aplicación.
+ * TODAS las propiedades que cualquier módulo lee/escribe deben
+ * estar declaradas aquí — sin excepción.
  *
- * CORRECCIONES v2.4:
- *   • isAuditoriaMode — audit.js lo escribe en 4 funciones pero
- *     state.js no lo declaraba → loadFromLocalStorage no podía
- *     restaurarlo entre sesiones → modo auditoría inconsistente.
+ * FIX BUG-7:
+ *   isAuditoriaMode — audit.js lo escribe en 4 funciones:
+ *     auditoriaEntrarArea()      → true
+ *     auditoriaFinalizarConteo() → false
+ *     auditoriaVolverSeleccion() → false
+ *     auditoriaResetear()        → false
+ *   Sin declarar aquí, loadFromLocalStorage no puede restaurarlo
+ *   entre sesiones. Si el bartender recarga durante un conteo
+ *   activo, el modo auditoría queda en false y el conteo se pierde.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -33,7 +40,7 @@ export const state = {
   inventarioConteo: {},
 
   // ─── Auditoría ───────────────────────────────────────────────
-  // { [productId]: { [area]: { enteras: n, abiertas: [...oz] } } }
+  // { [productId]: { [area]: { enteras: n, abiertas: [oz, ...] } } }
   auditoriaConteo: {},
 
   auditoriaStatus: {
@@ -42,27 +49,28 @@ export const state = {
     barra2:  'pendiente',
   },
 
-  // área activa en pantalla de conteo (v2.2)
+  // Área activa en pantalla de conteo
   auditoriaAreaActiva: null,
 
-  // sub-vista: 'selection' | 'counting' (v2.3)
+  // Sub-vista: 'selection' | 'counting'
   auditoriaView: 'selection',
 
-  // FIX v2.4 — audit.js lo escribe en auditoriaEntrarArea/Finalizar/Volver/Resetear.
-  // Sin declarar aquí, loadFromLocalStorage no puede restaurarlo y el modo auditoría
-  // puede quedar inconsistente al recargar la página durante un conteo activo.
+  // FIX BUG-7: flag de modo auditoría activo.
+  // audit.js lo escribe en 4 funciones. Sin declarar aquí,
+  // loadFromLocalStorage no puede restaurarlo al recargar,
+  // y el conteo activo se pierde.
   isAuditoriaMode: false,
 
   // ─── Multi-usuario ────────────────────────────────────────────
   // { [productId]: { [area]: { [userId]: { enteras, abiertas, ts } } } }
   auditoriaConteoPorUsuario: {},
 
-  // usuario actual de auditoría (v2.2)
+  // { userId, userName, role }
   auditCurrentUser: null,
 
-  // ─── Sesión Firebase (v2.2) ───────────────────────────────────
-  currentUser:  null,
-  userProfile:  null,
+  // ─── Sesión Firebase ─────────────────────────────────────────
+  currentUser:  null,   // firebase.User | null
+  userProfile:  null,   // { uid, email, displayName, role, ... }
 
   // 'admin' | 'user' | null
   userRole: null,
@@ -74,20 +82,22 @@ export const state = {
   _lastCloudSync:     0,
   _lastDataHash:      '',
 
-  // ajustes pendientes offline (v2.2)
+  // ─── Ajustes pendientes offline ──────────────────────────────
+  // Cola de ajustes solicitados sin conexión — se suben al reconectar.
   adjustmentsPending: [],
 
-  // ─── Notificaciones (v2.3) ────────────────────────────────────
+  // ─── Notificaciones ──────────────────────────────────────────
   // NOTA: nombre en inglés — notificaciones.js usa state.notifications
   notifications:       [],
   notificationsUnread: 0,
 
-  // ─── Ajustes del admin (v2.3) ────────────────────────────────
+  // ─── Ajustes del admin ───────────────────────────────────────
   ajustesPendientes: [],
 
-  // configuración sincronizada
+  // Configuración sincronizada
   ajustes: {},
 
   // ─── Reportes ────────────────────────────────────────────────
   reportesPublicados: [],
 };
+
