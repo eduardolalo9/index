@@ -1,130 +1,96 @@
 /**
- * js/auth.js — v2.3 (CORREGIDO)
+ * js/auth.js — v3.0 DEFINITIVO
  * ══════════════════════════════════════════════════════════════
  * Autenticación Firebase Email/Password con control de roles.
  *
- * CORRECCIONES v2.3:
+ * FIX BUG-1 (CRÍTICO — app nunca arrancaba):
  * ──────────────────────────────────────────────────────────────
- * BUG CRÍTICO (app nunca arrancaba):
- *
- *   _handleLogin() recreaba _authReady con una NUEVA Promise (P2)
- *   antes de resolver la original (P1).
+ * PROBLEMA:
+ *   _handleLogin() recreaba _authReady = new Promise() EN CADA
+ *   llamada, incluyendo el PRIMER login.
  *
  *   Secuencia rota:
  *     1. Módulo carga → P1 creada
- *     2. DOMContentLoaded → app.js llama onAuthReady.then(cb) → cb en P1
+ *     2. DOMContentLoaded → app.js: onAuthReady.then(cb) → cb en P1
  *     3. Firebase dispara onAuthStateChanged (async, DESPUÉS del sync)
- *     4. _handleLogin → _authReady = P2   ← P1 queda huérfana
+ *     4. _handleLogin() → _authReady = P2  ← P1 queda huérfana
  *     5. _authResolve(user) → resuelve P2
- *     6. cb de app.js (en P1) NUNCA dispara → app nunca arranca
+ *     6. cb de app.js (registrado en P1) NUNCA dispara
+ *     → app se queda en "Verificando sesión…" para siempre
  *
- *   CORRECCIÓN: La Promise inicial (P1) NO se recrea en el primer
- *   login. Solo se recrea cuando hay un CAMBIO de usuario
- *   (ya había una sesión previa y cambió el UID).
- *   En el primer login se usa directamente P1 → _authResolve(user)
- *   resuelve P1 → app.js callback dispara correctamente.
+ *   La condición `if (_lastAuthUid && _lastAuthUid !== user.uid)`
+ *   es FALSE en el primer login (porque _lastAuthUid era null),
+ *   así que cleanupRoles() no se llamaba, PERO la recreación de
+ *   _authReady en la línea siguiente SÍ ejecutaba siempre.
+ *
+ * CORRECCIÓN:
+ *   Solo recrear _authReady cuando hay CAMBIO DE USUARIO
+ *   (es decir, cuando _lastAuthUid ya tenía un valor diferente).
+ *   En el PRIMER LOGIN (_lastAuthUid era null), no recrear P1.
+ *   app.js ya tiene .then() sobre P1 → recibirá el resolve.
  *
  * Resto de correcciones (v2.2):
- * • _authResolve usa patrón re-creatable (no Promise única)
- * • Eliminados duplicados: stopRealtimeListeners y limpieza
- *   de email ya se manejan dentro de cleanupRoles()
- * • Añadido timeout de seguridad para initRoles
- * • Guard contra race condition logout-durante-init
- *
- * FLUJO:
- *   onAuthStateChanged(user)
- *     ├─ user  → initRoles(user) → showApp(user) → resolve(user)
- *     └─ !user → cleanupRoles() → showLogin()
+ * • Guard _authChangeInProgress evita eventos dobles de Firebase
+ * • Timeout de 15s en initRoles como seguridad
+ * • Guard contra cambio de usuario durante initRoles en progreso
  * ══════════════════════════════════════════════════════════════
  */
 
 import { initRoles, cleanupRoles } from './auth-roles.js';
 
-// ── Helper: acceso rápido a elementos del DOM ─────────────────
 const $id = id => document.getElementById(id);
 
-// ── Promise que app.js puede esperar ──────────────────────────
-// FIX v2.3: Esta Promise INICIAL no debe reemplazarse en el primer
-// login. app.js llama .then() sobre ella antes de que Firebase
-// dispare onAuthStateChanged (que es siempre async).
+// ── Promise inicial — app.js hace .then() sobre esta ─────────
+// CRÍTICO: No recrear esta Promise en el primer login.
 let _authResolve;
 let _authReady = new Promise(resolve => { _authResolve = resolve; });
 
-/** Retorna la Promise actual de auth ready */
-export function getAuthReady() {
-    return _authReady;
-}
-
-// ── Alias legacy (si app.js usa `onAuthReady` directamente) ───
+export function getAuthReady() { return _authReady; }
 export { _authReady as onAuthReady };
 
-// ── Timeout de seguridad (ms) ─────────────────────────────────
-const INIT_TIMEOUT = 15000; // 15 segundos máximo para initRoles
+const INIT_TIMEOUT = 15000;
 
-// ── Guard: evitar procesar auth si hay un cambio en progreso ──
 let _authChangeInProgress = false;
 let _lastAuthUid = null;
 
-// ─── Pantallas de auth ─────────────────────────────────────────
+// ─── Pantallas ─────────────────────────────────────────────────
 
 function showLogin() {
-    const loadingEl = $id('authLoadingScreen');
-    const loginEl = $id('loginScreen');
-    const appEl = $id('appWrapper');
-
-    if (loadingEl) loadingEl.classList.add('auth-hidden');
-    if (loginEl) loginEl.classList.remove('auth-hidden');
-    if (appEl) appEl.classList.remove('auth-visible');
-
+    $id('authLoadingScreen')?.classList.add('auth-hidden');
+    $id('loginScreen')?.classList.remove('auth-hidden');
+    $id('appWrapper')?.classList.remove('auth-visible');
     console.info('[Auth] Mostrando pantalla de login.');
 }
 
 function showApp(user) {
-    const loadingEl = $id('authLoadingScreen');
-    const loginEl = $id('loginScreen');
-    const appEl = $id('appWrapper');
-
-    if (loadingEl) loadingEl.classList.add('auth-hidden');
-    if (loginEl) loginEl.classList.add('auth-hidden');
-    if (appEl) appEl.classList.add('auth-visible');
-
+    $id('authLoadingScreen')?.classList.add('auth-hidden');
+    $id('loginScreen')?.classList.add('auth-hidden');
+    $id('appWrapper')?.classList.add('auth-visible');
     console.info('[Auth] ✓ Usuario autenticado:', user?.email || 'N/A');
 }
 
 function showAuthLoading() {
-    const loadingEl = $id('authLoadingScreen');
-    const loginEl = $id('loginScreen');
-    const appEl = $id('appWrapper');
-
-    if (loadingEl) loadingEl.classList.remove('auth-hidden');
-    if (loginEl) loginEl.classList.add('auth-hidden');
-    if (appEl) appEl.classList.remove('auth-visible');
+    $id('authLoadingScreen')?.classList.remove('auth-hidden');
+    $id('loginScreen')?.classList.add('auth-hidden');
+    $id('appWrapper')?.classList.remove('auth-visible');
 }
 
 function showAuthError(message) {
-    const loadingEl = $id('authLoadingScreen');
-    const loginEl = $id('loginScreen');
-    const appEl = $id('appWrapper');
-
-    if (loadingEl) loadingEl.classList.add('auth-hidden');
-    if (loginEl) loginEl.classList.remove('auth-hidden');
-    if (appEl) appEl.classList.remove('auth-visible');
-
+    $id('authLoadingScreen')?.classList.add('auth-hidden');
+    $id('loginScreen')?.classList.remove('auth-hidden');
+    $id('appWrapper')?.classList.remove('auth-visible');
     const errEl = $id('loginError');
-    if (errEl) {
-        errEl.textContent = message;
-        errEl.classList.add('visible');
-    }
+    if (errEl) { errEl.textContent = message; errEl.classList.add('visible'); }
     console.error('[Auth]', message);
 }
 
 // ═════════════════════════════════════════════════════════════
-// INICIALIZACIÓN — onAuthStateChanged
+// INICIALIZACIÓN
 // ═════════════════════════════════════════════════════════════
 
 export function initAuth() {
     if (!window._auth) {
-        console.error('[Auth] Firebase Auth no disponible — acceso bloqueado.');
+        console.error('[Auth] Firebase Auth no disponible.');
         showAuthError('⚠️ Error de configuración: Firebase Auth no está disponible.');
         _authResolve(null);
         return;
@@ -132,26 +98,18 @@ export function initAuth() {
 
     window._auth.onAuthStateChanged(async function (user) {
         if (_authChangeInProgress) {
-            console.warn('[Auth] Cambio de auth en progreso — encolando.');
             await new Promise(r => {
                 const check = setInterval(() => {
-                    if (!_authChangeInProgress) {
-                        clearInterval(check);
-                        r();
-                    }
+                    if (!_authChangeInProgress) { clearInterval(check); r(); }
                 }, 100);
                 setTimeout(() => { clearInterval(check); r(); }, 10000);
             });
         }
 
         _authChangeInProgress = true;
-
         try {
-            if (user) {
-                await _handleLogin(user);
-            } else {
-                _handleLogout();
-            }
+            if (user) { await _handleLogin(user); }
+            else       { _handleLogout(); }
         } catch (err) {
             console.error('[Auth] Error en onAuthStateChanged:', err);
             showLogin();
@@ -165,27 +123,24 @@ export function initAuth() {
 // ─── Handler de LOGIN ──────────────────────────────────────────
 
 async function _handleLogin(user) {
-    // Si es el mismo usuario que ya está logueado, ignorar
     if (_lastAuthUid === user.uid) {
         console.debug('[Auth] Mismo usuario, ignorando re-trigger.');
         return;
     }
 
-    // Si había otro usuario, limpiar primero
-    if (_lastAuthUid && _lastAuthUid !== user.uid) {
-        console.info('[Auth] Cambio de usuario detectado — limpiando sesión anterior.');
+    // Cambio de usuario: limpiar sesión anterior Y recrear Promise
+    if (_lastAuthUid !== null && _lastAuthUid !== user.uid) {
+        console.info('[Auth] Cambio de usuario — limpiando sesión anterior.');
         cleanupRoles();
-        // FIX v2.3: Solo recrear la Promise al CAMBIAR de usuario.
-        // En el primer login (_lastAuthUid era null) se usa la Promise
-        // inicial sobre la que app.js ya registró su .then().
-        // Reemplazarla aquí causaba que app.js nunca arrancara.
+        // FIX BUG-1: Solo recrear _authReady cuando hay CAMBIO DE USUARIO.
+        // En el PRIMER login (_lastAuthUid era null) NO se recrea,
+        // porque app.js ya tiene .then() sobre la Promise original (P1).
+        // Recrearla aquí rompía la cadena: app.js nunca arrancaba.
         _authReady = new Promise(resolve => { _authResolve = resolve; });
     }
-    // ↑ Si _lastAuthUid === null (primer login), NO se recrea _authReady.
-    //   La Promise P1 original sigue viva y app.js recibirá el resolve.
+    // Si _lastAuthUid === null → primer login → NO recrear → P1 sigue válida
 
     _lastAuthUid = user.uid;
-
     showAuthLoading();
 
     try {
@@ -201,22 +156,20 @@ async function _handleLogin(user) {
             return;
         }
 
-        console.info(`[Auth] Rol confirmado: ${role} — listeners activos.`);
+        console.info(`[Auth] Rol confirmado: ${role}`);
         showApp(user);
         _authResolve(user);
 
     } catch (err) {
         if (_lastAuthUid !== user.uid) {
-            console.warn('[Auth] Usuario cambió durante initRoles (error path) — abortando.');
+            console.warn('[Auth] Usuario cambió durante initRoles (error path).');
             return;
         }
-
         if (err.message === 'TIMEOUT') {
-            console.error('[Auth] Timeout al obtener rol — mostrando app con rol por defecto.');
+            console.error('[Auth] Timeout en initRoles — app con rol por defecto.');
         } else {
-            console.error('[Auth] Error al inicializar roles:', err);
+            console.error('[Auth] Error en initRoles:', err);
         }
-
         showApp(user);
         _authResolve(user);
     }
@@ -235,13 +188,11 @@ function _handleLogout() {
     _authReady = new Promise(resolve => { _authResolve = resolve; });
     _authResolve(null);
 
-    if (prevUid) {
-        console.info('[Auth] Sesión cerrada — todo limpiado.');
-    }
+    if (prevUid) console.info('[Auth] Sesión cerrada.');
 }
 
 // ═════════════════════════════════════════════════════════════
-// MANEJO DEL FORMULARIO DE LOGIN
+// FORMULARIO DE LOGIN
 // ═════════════════════════════════════════════════════════════
 
 const AUTH_ERROR_MESSAGES = {
@@ -256,27 +207,21 @@ const AUTH_ERROR_MESSAGES = {
 };
 
 export async function handleLogin() {
-    if (!window._auth) {
-        window.showNotification?.('⚠️ Firebase no está configurado.');
-        return;
-    }
+    if (!window._auth) { window.showNotification?.('⚠️ Firebase no está configurado.'); return; }
 
     const emailInput = $id('loginEmail');
-    const passInput = $id('loginPassword');
-    const errEl = $id('loginError');
-    const btn = $id('loginBtn');
-    const btnText = $id('loginBtnText');
+    const passInput  = $id('loginPassword');
+    const errEl      = $id('loginError');
+    const btn        = $id('loginBtn');
+    const btnText    = $id('loginBtnText');
 
-    const email = (emailInput?.value || '').trim();
+    const email    = (emailInput?.value || '').trim();
     const password = passInput?.value || '';
 
     if (errEl) errEl.classList.remove('visible');
 
     if (!email || !password) {
-        if (errEl) {
-            errEl.textContent = 'Por favor ingresa tu correo y contraseña.';
-            errEl.classList.add('visible');
-        }
+        if (errEl) { errEl.textContent = 'Por favor ingresa tu correo y contraseña.'; errEl.classList.add('visible'); }
         return;
     }
 
@@ -284,21 +229,15 @@ export async function handleLogin() {
     if (btnText) btnText.textContent = 'Iniciando sesión…';
 
     let spinner = null;
-    if (btn) {
-        spinner = document.createElement('span');
-        spinner.className = 'login-spinner';
-        btn.appendChild(spinner);
-    }
+    if (btn) { spinner = document.createElement('span'); spinner.className = 'login-spinner'; btn.appendChild(spinner); }
 
     try {
         await window._auth.signInWithEmailAndPassword(email, password);
         if (passInput) passInput.value = '';
-
     } catch (err) {
         console.warn('[Auth] Error al iniciar sesión:', err.code);
         if (errEl) {
-            errEl.textContent = AUTH_ERROR_MESSAGES[err.code]
-                || `Error: ${err.message || err.code}`;
+            errEl.textContent = AUTH_ERROR_MESSAGES[err.code] || `Error: ${err.message || err.code}`;
             errEl.classList.add('visible');
         }
     } finally {
@@ -325,6 +264,5 @@ export async function signOutUser() {
     }
 }
 
-// ── Bindings globales ─────────────────────────────────────────
 window.handleLogin = handleLogin;
 window.signOutUser = signOutUser;
