@@ -208,19 +208,22 @@ export function updateHeaderActions() {
     if (!container) return;
 
     const isAdmin   = state.userRole === 'admin';
-    const cartCount = state.cart.reduce((sum, item) => sum + (item.quantity || 0), 0);
+    // Suma de cantidades con soporte decimal (ej: 0.350 kg)
+    const cartCountRaw = state.cart.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0), 0);
+    const cartCount    = Math.round(cartCountRaw * 1000) / 1000;
+    const cartCountDisplay = cartCount % 1 === 0 ? String(cartCount) : cartCount.toFixed(3).replace(/\.?0+$/, '');
     let html = '';
 
     if ((state.activeTab === 'inicio' || state.activeTab === 'pedidos') && cartCount > 0) {
         html += `<button
             onclick="window.openOrderModal()"
             class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-orange-500 text-white rounded-lg text-sm font-semibold shadow-sm"
-            aria-label="Ver carrito (${cartCount} items)">
+            aria-label="Ver carrito (${cartCountDisplay} items)">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/>
             </svg>
-            <span>${cartCount}</span>
+            <span>${cartCountDisplay}</span>
         </button>`;
     }
 
