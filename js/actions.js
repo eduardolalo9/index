@@ -244,6 +244,16 @@ function openOrderModal() {
       _refreshOrderModal(); saveToLocalStorage();
     }
   };
+           // Nueva función para capturar el texto ingresado
+  window._cartSet = (idx, value) => {
+    if (state.cart[idx]) {
+      let val = parseFloat(value);
+      if (isNaN(val) || val <= 0) val = 0;
+      state.cart[idx].quantity = val;
+      _refreshOrderModal();
+      saveToLocalStorage();
+    }
+  };
   window._cartRem = idx => {
     state.cart.splice(idx, 1);
     if (state.cart.length === 0) { closeOrderModal(); return; }
