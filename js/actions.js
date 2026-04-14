@@ -1,10 +1,11 @@
 /**
- * js/actions.js — v3.1 (Edición Especial Decimales)
+ * js/actions.js — v3.2 (Edición Iconos & Decimales)
  * ══════════════════════════════════════════════════════════════
  * Actualizaciones:
  * 1. Soporte para cantidades decimales (ej. 0.350 kg).
  * 2. Eliminación de botones +/- para limpieza visual.
  * 3. Título dinámico en WhatsApp basado en el campo Notas.
+ * 4. Iconografía mejorada para mensajes de WhatsApp.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -115,13 +116,12 @@ export function addToCart(productId) {
   _render();
 }
 
-// Nueva función global para capturar texto manual (decimales)
 window._cartSet = (idx, value) => {
   const val = parseFloat(value);
   if (state.cart[idx]) {
     state.cart[idx].quantity = (isNaN(val) || val < 0) ? 0 : val;
     saveToLocalStorage();
-    _refreshOrderModal(); // Refrescar solo el contenido del modal
+    _refreshOrderModal();
   }
 };
 
@@ -174,7 +174,7 @@ export function closeOrderModal() {
   document.getElementById('orderModal').classList.add('hidden');
 }
 
-// ─── WHATSAPP Y TÍTULOS PERSONALIZADOS ────────────────────────
+// ─── WHATSAPP CON ICONOS ACTUALIZADOS ────────────────────────
 
 export function createOrder() {
   if (state.cart.length === 0) return showNotification('⚠️ El carrito está vacío');
@@ -184,14 +184,13 @@ export function createOrder() {
   const date     = document.getElementById('orderDeliveryDate').value;
   const orderId  = 'PED-' + Date.now();
 
-  // Lógica de título dinámico solicitada
   const tituloMensaje = note ? `📦 *${note}*` : `📦 *Pedido ${orderId}*`;
 
   const lines = [
     tituloMensaje,
-    `Proveedor: *${supplier}*`,
-    `Fecha entrega: *${date || 'No especificada'}*`,
-    note && !note.startsWith('PED') ? `Nota: _${note}_` : '',
+    `🏢 *Proveedor:* ${supplier}`,
+    `📅 *Fecha entrega:* ${date || 'No especificada'}`,
+    note && !note.startsWith('PED') ? `📝 *Nota:* _${note}_` : '',
     '',
     '*PRODUCTOS:*',
   ].filter(l => l !== '');
@@ -203,7 +202,6 @@ export function createOrder() {
   const message = encodeURIComponent(lines.join('\n'));
   window.open(`https://wa.me/?text=${message}`, '_blank');
 
-  // Guardar en historial
   state.orders.push({
     id: orderId,
     fecha: new Date().toISOString(),
@@ -226,8 +224,9 @@ export function shareOrderWhatsApp(orderId) {
 
   const lines = [
     tituloMensaje,
-    `Proveedor: *${order.proveedor}*`,
-    order.nota && !order.nota.startsWith('PED') ? `Nota: _${order.nota}_` : '',
+    `🏢 *Proveedor:* ${order.proveedor}`,
+    `📅 *Fecha:* ${new Date(order.fecha).toLocaleDateString()}`,
+    order.nota && !order.nota.startsWith('PED') ? `📝 *Nota:* _${order.nota}_` : '',
     '',
     '*PRODUCTOS:*'
   ].filter(l => l !== '');
@@ -240,7 +239,7 @@ export function shareOrderWhatsApp(orderId) {
   window.open(`https://wa.me/?text=${message}`, '_blank');
 }
 
-// ─── OTRAS FUNCIONES (INVENTARIO Y EXPORTACIÓN) ───────────────
+// ─── RESTO DE FUNCIONES ───────────────────────────────────────
 
 export function deleteOrder(id) {
   state.orders = state.orders.filter(o => o.id !== id);
@@ -272,11 +271,8 @@ export function saveInventory() {
 }
 
 export function openInventarioModal(productId, area) {
-  // Función puente para el modal de botellas abiertas
   const p = state.products.find(x => x.id === productId);
   if (!p) return;
-  
-  // Aquí se invoca la lógica de audit.js si es necesario
   console.log(`Abriendo conteo para ${p.name} en ${area}`);
 }
 
@@ -308,4 +304,4 @@ window.saveInventory          = saveInventory;
 window.openInventarioModal    = openInventarioModal;
 window.exportFullData         = exportFullData;
 
-console.info('[Actions] ✓ v3.1 — Decimales y Títulos dinámicos configurados.');
+console.info('[Actions] ✓ v3.2 — Iconografía premium y decimales activos.');
