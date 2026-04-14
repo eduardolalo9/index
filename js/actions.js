@@ -171,23 +171,44 @@ function addToCart(productId) {
   if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
   const existing = state.cart.find(i => i.id === productId);
   if (existing) {
-    existing.quantity += 1;
-    showNotification(`🛒 ${product.name} → ${existing.quantity}`);
+    // Incremento inteligente: 0.1 para unidades de peso (KG/GR/LT/L), 1 para el resto
+    const step = _getStep(product.unit);
+    existing.quantity = Math.round((existing.quantity + step) * 1000) / 1000;
+    showNotification(`🛒 ${product.name} → ${_fmtQty(existing.quantity)} ${product.unit || ''}`);
   } else {
-    state.cart.push({ id: product.id, name: product.name, unit: product.unit || 'Unidad', quantity: 1 });
+    const step = _getStep(product.unit);
+    state.cart.push({ id: product.id, name: product.name, unit: product.unit || 'Unidad', quantity: step });
     showNotification(`🛒 ${product.name} agregado`);
   }
   saveToLocalStorage();
   _render();
-  // Actualizar tabla si el modal de pedido está abierto
   if (!_el('orderModal')?.classList.contains('hidden')) _refreshOrderModal();
+}
+
+// Paso de incremento/decremento según unidad de medida
+function _getStep(unit) {
+  const u = (unit || '').toLowerCase();
+  if (u.includes('kg') || u.includes('kilo') || u.includes('gr') || u.includes('gram') ||
+      u.includes('lt') || u.includes('litro') || u.includes('ml') || u.includes('liter')) {
+    return 0.1;
+  }
+  return 1;
+}
+
+// Formato de cantidad: sin decimales innecesarios (1 → "1", 0.350 → "0.350")
+function _fmtQty(qty) {
+  if (!qty && qty !== 0) return '0';
+  const n = parseFloat(qty);
+  if (isNaN(n)) return '0';
+  // Mostrar hasta 3 decimales, quitando ceros finales
+  return n % 1 === 0 ? String(n) : n.toFixed(3).replace(/0+$/, '');
 }
 
 // ══════════════════════════════════════════════════════════════
 // MODAL DE PEDIDO — FIX BUG-3: usa #orderModal del HTML
 // ══════════════════════════════════════════════════════════════
 
-// FIX BUG-3: llena #orderProductsTable, #orderTotal y #emptyCart
+// FIX BUG-3 + DECIMALES: llena #orderProductsTable con inputs editables
 function _refreshOrderModal() {
   const tbody   = _el('orderProductsTable');
   const totalEl = _el('orderTotal');
@@ -202,24 +223,45 @@ function _refreshOrderModal() {
   }
 
   emptyEl?.classList.add('hidden');
-  const totalItems = state.cart.reduce((s, i) => s + i.quantity, 0);
-  if (totalEl) totalEl.textContent = `Total: ${totalItems}`;
 
-  tbody.innerHTML = state.cart.map((item, idx) => `
+  // Total: suma formateada
+  const totalItems = state.cart.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0);
+  if (totalEl) totalEl.textContent = `Total: ${_fmtQty(totalItems)}`;
+
+  tbody.innerHTML = state.cart.map((item, idx) => {
+    const step = _getStep(item.unit);
+    const qtyDisplay = _fmtQty(item.quantity);
+    return `
     <tr class="hover:bg-gray-50">
       <td class="px-4 py-3 text-gray-900 text-sm font-medium">${escapeHtml(item.name)}</td>
       <td class="px-4 py-3 text-center text-gray-600 text-sm">${escapeHtml(item.unit || '')}</td>
       <td class="px-4 py-3 text-center">
-        <div class="flex items-center justify-center gap-2">
-          <button onclick="window._cartDec(${idx})" style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;background:#f9fafb;font-size:1rem;cursor:pointer;line-height:1;">−</button>
-          <span class="font-bold text-gray-900 min-w-[24px] text-center">${item.quantity}</span>
-          <button onclick="window._cartInc(${idx})" style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;background:#f9fafb;font-size:1rem;cursor:pointer;line-height:1;">+</button>
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;">
+          <button onclick="window._cartDec(${idx})"
+            style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;
+                   background:#f9fafb;font-size:1rem;cursor:pointer;flex-shrink:0;">−</button>
+          <input
+            type="number"
+            min="0"
+            step="${step}"
+            value="${qtyDisplay}"
+            data-idx="${idx}"
+            oninput="window._cartEdit(${idx}, this.value)"
+            style="width:64px;text-align:center;font-weight:700;font-size:0.92rem;
+                   border:1px solid #d1d5db;border-radius:6px;padding:3px 4px;
+                   background:#fff;color:#111;">
+          <button onclick="window._cartInc(${idx})"
+            style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;
+                   background:#f9fafb;font-size:1rem;cursor:pointer;flex-shrink:0;">+</button>
         </div>
       </td>
       <td class="px-4 py-3 text-center">
-        <button onclick="window._cartRem(${idx})" style="padding:3px 10px;background:#fee2e2;color:#dc2626;border:none;border-radius:6px;font-size:0.75rem;cursor:pointer;">✕ Quitar</button>
+        <button onclick="window._cartRem(${idx})"
+          style="padding:3px 10px;background:#fee2e2;color:#dc2626;border:none;
+                 border-radius:6px;font-size:0.75rem;cursor:pointer;">✕ Quitar</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 // FIX BUG-3: openOrderModal ahora usa el modal estático #orderModal
@@ -234,20 +276,36 @@ function openOrderModal() {
   if (fNote)     fNote.value     = '';
 
   window._cartInc = idx => {
-    if (state.cart[idx]) { state.cart[idx].quantity += 1; _refreshOrderModal(); saveToLocalStorage(); }
+    if (!state.cart[idx]) return;
+    const step = _getStep(state.cart[idx].unit);
+    state.cart[idx].quantity = Math.round((parseFloat(state.cart[idx].quantity) + step) * 1000) / 1000;
+    _refreshOrderModal(); saveToLocalStorage();
   };
   window._cartDec = idx => {
-    if (state.cart[idx]) {
-      state.cart[idx].quantity -= 1;
-      if (state.cart[idx].quantity <= 0) state.cart.splice(idx, 1);
-      if (state.cart.length === 0) { closeOrderModal(); return; }
-      _refreshOrderModal(); saveToLocalStorage();
-    }
+    if (!state.cart[idx]) return;
+    const step = _getStep(state.cart[idx].unit);
+    state.cart[idx].quantity = Math.round((parseFloat(state.cart[idx].quantity) - step) * 1000) / 1000;
+    if (state.cart[idx].quantity <= 0) state.cart.splice(idx, 1);
+    if (state.cart.length === 0) { closeOrderModal(); return; }
+    _refreshOrderModal(); saveToLocalStorage();
   };
   window._cartRem = idx => {
     state.cart.splice(idx, 1);
     if (state.cart.length === 0) { closeOrderModal(); return; }
     _refreshOrderModal(); saveToLocalStorage();
+  };
+  // Edición directa del input numérico
+  window._cartEdit = (idx, rawVal) => {
+    if (!state.cart[idx]) return;
+    const val = parseFloat(rawVal);
+    if (isNaN(val) || val < 0) return;
+    state.cart[idx].quantity = Math.round(val * 1000) / 1000;
+    // Actualizar solo el total sin re-renderizar toda la tabla (para no mover el cursor)
+    const totalEl = _el('orderTotal');
+    const totalItems = state.cart.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0);
+    if (totalEl) totalEl.textContent = `Total: ${_fmtQty(totalItems)}`;
+    saveToLocalStorage();
+  };
   };
 
   _refreshOrderModal();
@@ -273,13 +331,15 @@ function createOrder() {
   const deliveryDate = _el('orderDeliveryDate')?.value || '';
   const note         = (_el('orderNote')?.value || '').trim();
   const fecha        = new Date().toLocaleDateString('es-MX');
-  const orderId      = 'PED-' + Date.now();
+
+  // ID legible: PED-BARRA-DDMM-NNN (secuencial diario en localStorage)
+  const orderId = _generarIdPedido();
 
   const order = {
     id: orderId, supplier, date: fecha,
     deliveryDate: deliveryDate || null,
     note: note || null,
-    total:    state.cart.reduce((s, i) => s + i.quantity, 0),
+    total:    state.cart.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0),
     products: state.cart.map(i => ({ ...i })),
   };
   state.orders.unshift(order);
@@ -292,10 +352,10 @@ function createOrder() {
     deliveryDate ? `Entrega: ${deliveryDate}` : null,
     '',
     '*Productos:*',
-    ...state.cart.map(i => `• ${i.name} (${i.unit || 'Unid'}): *${i.quantity}*`),
+    ...state.cart.map(i => `• ${escapeHtml(i.name)} (${escapeHtml(i.unit || 'Unid')}): *${_fmtQty(i.quantity)}*`),
     '',
     note ? `📝 Nota: ${note}` : null,
-    `Total items: *${order.total}*`,
+    `Total: *${_fmtQty(order.total)} ${state.cart.length === 1 ? state.cart[0].unit : 'unidades'}*`,
   ].filter(l => l !== null).join('\n');
 
   state.cart = [];
@@ -304,7 +364,36 @@ function createOrder() {
   _render();
 
   window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
-  showNotification(`✅ Pedido ${orderId} enviado`);
+  showNotification(`✅ ${orderId} enviado`);
+}
+
+// Genera ID de pedido legible con secuencial diario
+// Formato: PED-BARRA-DDMM-001
+function _generarIdPedido() {
+  const now  = new Date();
+  const dd   = String(now.getDate()).padStart(2, '0');
+  const mm   = String(now.getMonth() + 1).padStart(2, '0');
+  const hoy  = `${dd}${mm}${now.getFullYear()}`;
+
+  let lastDate = '';
+  let seq = 0;
+  try {
+    const stored = JSON.parse(localStorage.getItem('bar_pedido_seq') || '{}');
+    lastDate = stored.date || '';
+    seq      = stored.seq  || 0;
+  } catch (_) {}
+
+  if (lastDate === hoy) {
+    seq += 1;
+  } else {
+    seq = 1;
+  }
+
+  try {
+    localStorage.setItem('bar_pedido_seq', JSON.stringify({ date: hoy, seq }));
+  } catch (_) {}
+
+  return `PED-BARRA-${dd}${mm}-${String(seq).padStart(3, '0')}`;
 }
 
 function shareOrderWhatsApp(orderId) {
@@ -317,7 +406,7 @@ function shareOrderWhatsApp(orderId) {
     order.deliveryDate ? `Entrega: ${order.deliveryDate}` : null,
     '',
     '*Productos:*',
-    ...(order.products || []).map(p => `• ${p.name} (${p.unit || 'Unid'}): *${p.quantity}*`),
+    ...(order.products || []).map(p => `• ${escapeHtml(p.name)} (${escapeHtml(p.unit || 'Unid')}): *${_fmtQty(p.quantity)}*`),
     '',
     order.note ? `📝 ${order.note}` : null,
   ].filter(l => l !== null).join('\n');

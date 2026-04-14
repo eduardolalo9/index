@@ -174,4 +174,3 @@ window.addEventListener('DOMContentLoaded', () => {
     console.info('[App] ✓ Arranque completo.');
   });
 });
-
