@@ -266,3 +266,4 @@ export async function signOutUser() {
 
 window.handleLogin = handleLogin;
 window.signOutUser = signOutUser;
+
