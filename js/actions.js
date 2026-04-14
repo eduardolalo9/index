@@ -212,7 +212,7 @@ function _refreshOrderModal() {
       <td class="px-4 py-3 text-center">
         <div class="flex items-center justify-center gap-2">
           <button onclick="window._cartDec(${idx})" style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;background:#f9fafb;font-size:1rem;cursor:pointer;line-height:1;">−</button>
-          <span class="font-bold text-gray-900 min-w-[24px] text-center">${item.quantity}</span>
+          <input type="number" step="0.001" value="${item.quantity}" onchange="window._cartSet(${idx}, this.value)" style="width: 55px; text-align: center; font-weight: bold; border: 1px solid #e5e7eb; border-radius: 4px; background: transparent; outline: none;">
           <button onclick="window._cartInc(${idx})" style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;background:#f9fafb;font-size:1rem;cursor:pointer;line-height:1;">+</button>
         </div>
       </td>
@@ -273,7 +273,7 @@ function createOrder() {
   const deliveryDate = _el('orderDeliveryDate')?.value || '';
   const note         = (_el('orderNote')?.value || '').trim();
   const fecha        = new Date().toLocaleDateString('es-MX');
-  const orderId      = 'PED-' + Date.now();
+  const orderId      = 'PED BARRA-' + Date.now();
 
   const order = {
     id: orderId, supplier, date: fecha,
