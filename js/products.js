@@ -450,3 +450,4 @@ export function finalizarInventario() {
   showNotification('✅ Inventario finalizado y guardado en historial');
   return snapshot;
 }
+

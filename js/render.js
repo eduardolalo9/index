@@ -144,7 +144,7 @@ function renderInicioTab() {
   html += _statCard('📦', 'Productos',  totalProducts, 'var(--accent)');
   html += _statCard('📊', 'Stock total', totalStock.toFixed(1), 'var(--green)');
   html += _statCard('🛒', 'En carrito',
-    state.cart.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0).toFixed(3).replace(/\.?0+$/, '') || '0', 'var(--amber)');
+    state.cart.reduce((s, i) => s + i.quantity, 0).toFixed(1), 'var(--amber)');
   html += _statCard('📋', 'Pedidos', state.orders.length, 'var(--sky)');
   html += '</div>';
 
