@@ -774,48 +774,42 @@ html[data-theme="light"] input:disabled { background-color: #F2F2F7 !important; 
 }
 .btn-count-large:hover { background: var(--accent-hover); box-shadow: 0 6px 22px rgba(10,132,255,0.38); }
 
-
-/* ─── MODALES (Glassmorphism & Centrado) ─────────────────────────── */
+/* ─── MODALES ─────────────────────────────────────────────────────── */
 #productModal, #orderModal, #inventarioModal {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    padding: 16px;
     animation: fadeIn 0.16s ease-out both !important;
-    backdrop-filter: blur(12px) saturate(180%) !important;
-    -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
-    background-color: rgba(0,0,0,0.65) !important; /* Fondo más oscuro */
+    backdrop-filter: blur(8px) saturate(1.4) !important;
+    -webkit-backdrop-filter: blur(8px) saturate(1.4) !important;
+    background-color: rgba(0,0,0,0.72) !important;
 }
-
-/* La caja interna del modal */
 #productModal > div, #orderModal > div, #inventarioModal > div {
     animation: springUp 0.24s var(--ease-out) both !important;
-    background-color: var(--surface) !important; /* Gris carbón translúcido */
+    background-color: var(--card) !important;
     border: 1px solid var(--border-mid) !important;
-    border-radius: var(--r-xl) !important; /* Esquinas muy redondeadas */
-    box-shadow: var(--shadow-elevated) !important;
-    
-    /* Reglas para evitar ventana completa */
-    width: 100% !important;
-    max-width: 420px !important; /* Límite de ancho para que no se estire */
-    max-height: 85vh !important; /* Límite de alto (85% de la pantalla) */
-    overflow-y: auto !important; /* Permite scroll solo dentro de la caja si hay muchos items */
-    margin: auto;
+    border-radius: var(--r-xl) var(--r-xl) 0 0 !important;
+    box-shadow: var(--shadow-modal) !important;
 }
-
-/* Redondear la pequeña barra decorativa de arriba */
+@media (min-width: 768px) {
+    #productModal > div, #orderModal > div, #inventarioModal > div {
+        border-radius: var(--r-xl) !important;
+    }
+}
 #productModal .w-12.h-1\.5, #orderModal .w-12.h-1\.5, #inventarioModal .w-12.h-1\.5 {
     background: var(--border-strong) !important;
     border-radius: 100px !important;
     opacity: 0.35 !important;
 }
-
 #productModal h2, #orderModal h2, #inventarioModal h2 {
-    font-family: 'Poppins', system-ui, sans-serif !important;
+    font-family: 'Figtree', system-ui, sans-serif !important;
     font-weight: 700 !important;
     font-size: 1.0625rem !important;
     letter-spacing: -0.01em !important;
-    color: #FFFFFF !important;
+    color: var(--txt-primary) !important;
+}
+html[data-theme="light"] #productModal > div,
+html[data-theme="light"] #orderModal > div,
+html[data-theme="light"] #inventarioModal > div {
+    background-color: #FFFFFF !important;
+    border-color: rgba(0,0,0,0.08) !important;
 }
 
 /* ─── TOAST ───────────────────────────────────────────────────────── */
