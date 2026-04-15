@@ -1,6 +1,7 @@
 /**
  * js/render.js — Motor de renderizado de tabs (SPA sin framework).
  * Genera HTML como strings y lo inyecta en #tabContent.
+ * v2.0 — Midnight Pro Design System
  */
 import { state } from './state.js';
 import { AREAS, AREAS_AUDITORIA, AREAS_AUDITORIA_FA, AREA_KEYS } from './constants.js';
@@ -83,6 +84,7 @@ export function renderTab() {
 export function switchTab(tab) {
   state.activeTab = tab;
 
+  /* Actualizar indicadores en tab-bar oculto */
   document.querySelectorAll('.tab-btn').forEach(btn => {
     const indicator = btn.querySelector('.tab-indicator');
     if (btn.dataset.tab === tab) {
@@ -102,6 +104,7 @@ export function switchTab(tab) {
     }
   });
 
+  /* Actualizar sidebar (.sb-item) Y bottom nav (.bn-item.sb-item) */
   document.querySelectorAll('.sb-item').forEach(btn => {
     if (btn.dataset.sbTab === tab) btn.classList.add('sb-active');
     else btn.classList.remove('sb-active');
@@ -113,67 +116,50 @@ export function switchTab(tab) {
 
 /* ═══════════════════════════════════════════════════════════════
    TAB: INICIO
-   ┌──────────────────────────────────┬───────┬──────┐
-   │ Elemento                         │ admin │ user │
-   ├──────────────────────────────────┼───────┼──────┤
-   │ Stats + buscador + filtro grupo  │  ✓    │  ✓   │
-   │ Botón "+ Producto"               │  ✓    │  ✗   │
-   │ Botón "Importar Excel"           │  ✓    │  ✗   │
-   │ Lista productos + stock          │  ✓    │  ✓   │
-   │ Botón 🛒 Agregar al carrito      │  ✓    │  ✓   │
-   │ Botón ✏️ Editar                  │  ✓    │  ✗   │
-   │ Botón 🗑 Eliminar producto       │  ✓    │  ✗   │
-   │ Botón "Eliminar todos"           │  ✓    │  ✗   │
-   └──────────────────────────────────┴───────┴──────┘
 ═══════════════════════════════════════════════════════════════ */
 function renderInicioTab() {
-  // FIX BUG-1: userRole puede ser null durante la carga inicial de Firestore.
-  // state.userRole === 'admin' es la única condición válida para mostrar controles de admin.
-  // null y 'user' deben tratarse igual: sin acceso a funciones de escritura.
-  const isAdmin = state.userRole === 'admin';
-  const roleLoading = state.userRole === null; // Firestore aún no respondió
-  const filtered     = filterByGroup();
-  const groups       = getAvailableGroups();
+  const isAdmin    = state.userRole === 'admin';
+  const roleLoading = state.userRole === null;
+  const filtered   = filterByGroup();
+  const groups     = getAvailableGroups();
   const totalProducts = state.products.length;
-  const totalStock   = state.products.reduce((s, p) => s + getTotalStock(p), 0);
+  const totalStock    = state.products.reduce((s, p) => s + getTotalStock(p), 0);
 
   let html = '<div class="space-y-4">';
 
   /* ── Stats ── */
   html += '<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">';
-  html += _statCard('📦', 'Productos',  totalProducts, 'var(--accent)');
-  html += _statCard('📊', 'Stock total', totalStock.toFixed(1), 'var(--green)');
-  html += _statCard('🛒', 'En carrito',
-    state.cart.reduce((s, i) => s + i.quantity, 0).toFixed(1), 'var(--amber)');
-  html += _statCard('📋', 'Pedidos', state.orders.length, 'var(--sky)');
+  html += _statCard('📦', 'Productos',   totalProducts,                             'var(--accent)');
+  html += _statCard('📊', 'Stock total', totalStock.toFixed(1),                     'var(--green)');
+  html += _statCard('🛒', 'En carrito',  state.cart.reduce((s,i)=>s+i.quantity,0).toFixed(1), 'var(--amber)');
+  html += _statCard('📋', 'Pedidos',     state.orders.length,                       'var(--sky)');
   html += '</div>';
 
   /* ── Barra de filtros ── */
-  html += '<div class="bg-white rounded-xl p-3 shadow-md flex flex-wrap gap-2 items-center">';
+  html += '<div class="filter-bar">';
 
-  html += `<input type="text" placeholder="Buscar..."
+  html += `<input type="text" placeholder="Buscar producto…"
     value="${escapeHtml(state.searchTerm)}"
     oninput="window.updateSearchTerm(this.value)"
-    class="flex-1 min-w-32 px-3 py-2 bg-white text-gray-900
-           border border-gray-200 rounded text-sm">`;
+    class="field-input">`;
 
-  html += '<select onchange="window.updateSelectedGroup(this.value)" '
-        + 'class="px-2 py-2 bg-white text-gray-900 border border-gray-200 rounded text-sm">';
+  html += `<select onchange="window.updateSelectedGroup(this.value)" class="field-select">`;
   groups.forEach(g => {
     html += `<option value="${escapeHtml(g)}"${state.selectedGroup === g ? ' selected' : ''}>
       ${escapeHtml(g)}</option>`;
   });
   html += '</select>';
 
-  /* Botones de admin — solo visibles para admin */
   if (isAdmin) {
     html += `<button onclick="window.openProductModal()"
       class="px-3 py-2 bg-gradient-to-r from-purple-500 to-blue-500
-             text-white rounded text-sm font-semibold">
-      + Producto
+             text-white rounded-lg text-sm font-semibold flex items-center gap-1.5">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+      </svg>
+      Producto
     </button>`;
 
-    /* FIX BUG-1: Importar Excel — siempre visible para admin, sin condición de tab */
     html += `<button
         onclick="
           var fi = document.getElementById('fileInput');
@@ -182,64 +168,58 @@ function renderInicioTab() {
           fi.click();
         "
         class="px-3 py-2 bg-gradient-to-r from-green-600 to-emerald-600
-               text-white rounded text-sm font-semibold flex items-center gap-1"
+               text-white rounded-lg text-sm font-semibold flex items-center gap-1.5"
         title="Importar catálogo desde Excel (.xlsx, .xls, .csv)">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
         </svg>
-      📊 Importar Excel
+        Excel
     </button>`;
   } else if (roleLoading) {
-    /* Rol aún cargando — mostrar indicador para que el admin sepa que espere */
     html += `<span style="font-size:0.7rem;color:var(--txt-muted);padding:6px 8px;">
       ⏳ Verificando rol…
     </span>`;
-  } /* cierra if(isAdmin) */
+  }
 
-  /* FIX Bug #3: cierre correcto del div de barra de filtros */
-  html += '</div>';
+  html += '</div>'; /* cierra filter-bar */
 
   /* ── Lista de productos ── */
   if (filtered.length === 0) {
-    html += '<div class="bg-white rounded-xl p-8 text-center shadow-md">'
-          + '<p class="text-gray-500">No hay productos que mostrar</p></div>';
+    html += `<div class="bg-white rounded-xl p-10 text-center shadow-md">
+      <div style="font-size:2.5rem;margin-bottom:10px;">📦</div>
+      <p class="text-gray-500 font-medium">No hay productos que mostrar</p>
+    </div>`;
   } else {
     html += '<div class="space-y-2">';
-
     filtered.forEach((p, idx) => {
       const total = getTotalStock(p);
-      const delay = Math.min(idx * 30, 300);
+      const delay = Math.min(idx * 25, 300);
 
-      /* Apertura card */
-      html += `<div class="bg-white rounded-xl p-3 shadow-md"
-        style="animation:cardIn 0.2s ease-out ${delay}ms both">`;
+      html += `<div class="product-card" style="animation:cardIn 0.2s ease-out ${delay}ms both">`;
+      html += '<div class="product-card__body">';
+      html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">';
 
-      html += '<div class="flex items-center gap-3">';
-
-      /* Info producto */
-      html += '<div class="flex-1 min-w-0">';
-      html += `<div class="flex items-center gap-2 flex-wrap">
-        <span class="font-semibold text-gray-900 text-sm">${escapeHtml(p.name)}</span>
-        <span class="text-xs px-2 py-1 bg-purple-100 rounded text-purple-600">
-          ${escapeHtml(p.group || 'General')}
-        </span>
+      /* Info */
+      html += '<div style="flex:1;min-width:0;">';
+      html += `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">
+        <span class="product-card__name">${escapeHtml(p.name)}</span>
+        <span class="product-card__group">${escapeHtml(p.group || 'General')}</span>
       </div>`;
-      html += `<div class="text-xs text-gray-500 mt-1">
-        ${escapeHtml(p.id)} · ${escapeHtml(p.unit || '')} ·
-        Total: <strong>${total.toFixed(2)}</strong>
+      html += `<div class="product-card__meta">
+        ${escapeHtml(p.id)} · ${escapeHtml(p.unit || '')} · Total: <strong style="color:var(--txt-primary)">${total.toFixed(2)}</strong>
       </div>`;
-      html += '</div>'; /* cierra flex-1 */
+      html += '</div>';
 
-      /* Botones de acción */
-      html += '<div class="flex gap-2 flex-shrink-0">';
+      /* Botones */
+      html += '<div style="display:flex;gap:6px;flex-shrink:0;">';
 
-      /* 🛒 Carrito — AMBOS roles */
+      /* 🛒 Carrito */
       html += `<button data-id="${escapeHtml(p.id)}"
         onclick="window.addToCart(this.dataset.id)"
+        title="Agregar al carrito"
         class="p-2 bg-gradient-to-br from-purple-500 to-blue-500
-               text-white rounded-lg text-xs"
-        title="Agregar al carrito">
+               text-white rounded-lg text-xs">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293
@@ -248,13 +228,13 @@ function renderInicioTab() {
         </svg>
       </button>`;
 
-      /* 🔧 Solicitar ajuste — SOLO usuario (no admin; admin edita directamente) */
+      /* 🔧 Ajuste — SOLO usuario */
       if (!isAdmin) {
         html += `<button data-id="${escapeHtml(p.id)}"
           onclick="window.openAjusteModal(this.dataset.id)"
+          title="Solicitar ajuste"
           class="p-2 bg-gradient-to-br from-blue-500 to-purple-500
-                 text-white rounded-lg text-xs"
-          title="Solicitar ajuste al administrador">
+                 text-white rounded-lg text-xs">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0
@@ -274,9 +254,9 @@ function renderInicioTab() {
       if (isAdmin) {
         html += `<button data-id="${escapeHtml(p.id)}"
           onclick="window.editProduct(this.dataset.id)"
+          title="Editar producto"
           class="p-2 bg-gradient-to-br from-blue-500 to-purple-500
-                 text-white rounded-lg text-xs"
-          title="Editar producto">
+                 text-white rounded-lg text-xs">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536
@@ -286,9 +266,9 @@ function renderInicioTab() {
 
         html += `<button data-id="${escapeHtml(p.id)}"
           onclick="window.deleteProduct(this.dataset.id)"
+          title="Eliminar producto"
           class="p-2 bg-gradient-to-br from-red-500 to-orange-500
-                 text-white rounded-lg text-xs"
-          title="Eliminar producto">
+                 text-white rounded-lg text-xs">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0
@@ -298,107 +278,160 @@ function renderInicioTab() {
         </button>`;
       }
 
-      html += '</div>'; /* cierra div.flex.gap-2 (botones) */
-      html += '</div>'; /* cierra div.flex.items-center.gap-3 */
+      html += '</div>'; /* cierra botones */
+      html += '</div>'; /* cierra flex info+botones */
+      html += '</div>'; /* cierra product-card__body */
 
-      /* Stock por área — AMBOS roles */
-      html += '<div class="flex gap-2 mt-2">';
+      /* Stock por área */
+      html += '<div class="product-card__areas">';
       AREA_KEYS.forEach(area => {
         const val = p.stockByArea && p.stockByArea[area] !== undefined
                     ? p.stockByArea[area] : 0;
-        html += `<span class="text-xs px-2 py-1 rounded"
-          style="background:var(--surface);color:var(--txt-secondary)">
-          ${AREAS[area]}: <strong>${val.toFixed(2)}</strong>
-        </span>`;
+        html += `<div class="area-chip">
+          <span class="area-chip__name">${AREAS[area]}</span>
+          <span class="area-chip__val">${val.toFixed(2)}</span>
+        </div>`;
       });
-      html += '</div>'; /* cierra div stock por área */
+      html += '</div>'; /* cierra product-card__areas */
 
-      html += '</div>'; /* FIX Bug #4: cierra card producto (explícito, separado) */
+      html += '</div>'; /* cierra product-card */
     });
-
-    html += '</div>'; /* cierra div.space-y-2 */
+    html += '</div>'; /* cierra space-y-2 */
   }
 
-  /* ── "Eliminar todos" — SOLO admin ── */
+  /* ── Eliminar todos — SOLO admin ── */
   if (isAdmin && state.products.length > 0) {
     html += `<button onclick="window.deleteAllProducts()"
       class="w-full py-2 bg-gradient-to-r from-red-500 to-orange-500
-             text-white rounded-lg text-sm font-semibold opacity-70
+             text-white rounded-lg text-sm font-semibold opacity-60
              hover:opacity-100 transition-opacity">
       Eliminar todos los productos
     </button>`;
   }
 
-  html += '</div>'; /* cierra div.space-y-4 raíz */
+  /* ── Toggle de sincronización ── */
+  html += `<div class="bg-white rounded-xl p-4 shadow-md">
+    <h3 style="font-size:0.8rem;font-weight:700;color:var(--txt-primary);margin-bottom:10px;letter-spacing:0.02em;">
+      ⚙️ SINCRONIZACIÓN
+    </h3>`;
+  const syncOn = state.syncEnabled !== false;
+  html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+    <div>
+      <div style="font-size:0.8rem;font-weight:600;color:var(--txt-primary);">
+        ${syncOn ? '☁️ Activa' : '📴 Pausada'}
+      </div>
+      <div style="font-size:0.7rem;color:var(--txt-muted);margin-top:2px;">
+        ${syncOn
+          ? 'Datos subiéndose automáticamente a la nube.'
+          : 'Solo guardado local hasta activar sync.'}
+      </div>
+    </div>
+    <button onclick="window.toggleSync()"
+      style="padding:8px 16px;border-radius:100px;font-size:0.78rem;font-weight:700;
+             cursor:pointer;min-height:auto;flex-shrink:0;letter-spacing:0.02em;
+             background:${syncOn ? 'var(--red-dim)' : 'var(--accent-dim)'};
+             border:1px solid ${syncOn ? 'rgba(255,69,58,.22)' : 'var(--accent-dim2)'};
+             color:${syncOn ? 'var(--red-text)' : 'var(--accent)'};">
+      ${syncOn ? '⏸ Pausar' : '▶ Activar'}
+    </button>
+  </div>`;
+  html += '</div>';
+
+  /* ── Reportes publicados ── */
+  html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
+    <h3 style="font-size:0.8rem;font-weight:700;color:var(--txt-primary);letter-spacing:0.02em;">
+      📊 REPORTES PUBLICADOS
+    </h3>
+  </div>`;
+
+  if (isAdmin) {
+    html += `<button onclick="window.openPublicarReporteModal()"
+      style="width:100%;padding:12px;background:linear-gradient(135deg,#0d2b1a,#0f3420);
+             border:1px solid rgba(48,209,88,.22);border-radius:var(--r-lg);
+             color:var(--green);font-size:0.82rem;font-weight:700;cursor:pointer;
+             display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px;
+             letter-spacing:0.01em;">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586
+             a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      </svg>
+      Generar y publicar reporte final
+    </button>`;
+  }
+
+  html += renderReportesPublicados();
+  html += '</div>'; /* cierra space-y-4 raíz */
   return html;
 }
-/* ─── FIN renderInicioTab ─────────────────────────────────────── */
 
-/* ── Helper stat card ── */
-function _statCard(emoji, label, value, color) {
-  return `<div class="bg-white rounded-xl p-3 shadow-md text-center">
-    <div style="font-size:1.5rem">${emoji}</div>
-    <div class="text-xs text-gray-500 mt-1">${label}</div>
-    <div class="font-bold text-lg" style="color:${color}">${value}</div>
+/* ── Helper: Stat Card Premium ── */
+function _statCard(icon, label, value, colorVar) {
+  const colorMap = {
+    'var(--accent)': { bg: 'rgba(10,132,255,0.12)', border: 'rgba(10,132,255,0.18)' },
+    'var(--green)':  { bg: 'rgba(48,209,88,0.10)',  border: 'rgba(48,209,88,0.16)'  },
+    'var(--amber)':  { bg: 'rgba(255,159,10,0.10)', border: 'rgba(255,159,10,0.16)' },
+    'var(--sky)':    { bg: 'rgba(100,210,255,0.10)',border: 'rgba(100,210,255,0.16)'},
+  };
+  const c = colorMap[colorVar] || colorMap['var(--accent)'];
+  return `<div class="stat-card">
+    <div class="stat-card__icon" style="background:${c.bg};border:1px solid ${c.border}">
+      ${icon}
+    </div>
+    <div class="stat-card__val" style="color:${colorVar}">${value}</div>
+    <div class="stat-card__label">${label}</div>
   </div>`;
 }
 
-/* ── TAB: PRODUCTOS (alias de inicio) ── */
+/* ── TAB: PRODUCTOS ── */
 function renderProductosTab() { return renderInicioTab(); }
 
 /* ═══════════════════════════════════════════════════════════════
-   TAB: PEDIDOS — Solo historial de pedidos generados por WhatsApp.
-   El catálogo para agregar al carrito está en Inicio (botón 🛒).
-   Los pedidos NO se sincronizan a Firestore — quedan solo en
-   el dispositivo (localStorage).
+   TAB: PEDIDOS
 ═══════════════════════════════════════════════════════════════ */
 function renderPedidosTab() {
   const isAdmin = state.userRole === 'admin';
-
   let html = '<div class="space-y-4">';
 
-  /* ── Encabezado de sección ── */
-  html += `<div class="flex items-center justify-between">
-    <h3 class="text-lg font-bold text-gray-900">
-      📱 Pedidos por WhatsApp
-    </h3>
-    <span class="text-xs text-gray-400 italic">Solo en este dispositivo</span>
+  html += `<div style="display:flex;align-items:center;justify-content:space-between;">
+    <div>
+      <h3 style="font-size:1rem;font-weight:700;color:var(--txt-primary);letter-spacing:-0.01em;">
+        Pedidos WhatsApp
+      </h3>
+      <p style="font-size:0.68rem;color:var(--txt-muted);margin-top:2px;">Solo en este dispositivo</p>
+    </div>
   </div>`;
 
-  /* ── Sin pedidos ── */
   if (state.orders.length === 0) {
-    html += `<div class="bg-white rounded-xl p-8 text-center shadow-md">
-      <div style="font-size:2.5rem">🛒</div>
-      <p class="text-gray-500 mt-2 font-medium">No hay pedidos todavía</p>
-      <p class="text-xs text-gray-400 mt-1">
-        Ve a Inicio, agrega productos al carrito con 🛒 y genera un pedido
+    html += `<div class="bg-white rounded-xl p-10 text-center shadow-md">
+      <div style="font-size:2.5rem;margin-bottom:10px;">🛒</div>
+      <p class="text-gray-500 font-medium">No hay pedidos todavía</p>
+      <p style="font-size:0.75rem;color:var(--txt-muted);margin-top:6px;">
+        Ve a Inicio, agrega productos con 🛒 y genera un pedido
       </p>
     </div>`;
     html += '</div>';
     return html;
   }
 
-  /* ── Historial de pedidos ── */
   html += '<div class="space-y-4">';
-
   state.orders.forEach((order, idx) => {
     const delay = Math.min(idx * 50, 400);
     html += `<div class="bg-white rounded-2xl p-4 shadow-md"
       style="animation:tabContentIn 0.3s ease-out ${delay}ms both">`;
 
     html += `<div class="flex justify-between items-start mb-3">
-      <div>
-        <h3 class="text-base font-bold text-gray-900">${escapeHtml(order.id)}</h3>
-        <p class="text-sm text-gray-600">Proveedor: ${escapeHtml(order.supplier)}</p>
-        <p class="text-xs text-gray-500">Fecha: ${escapeHtml(order.date)}</p>
+      <div style="flex:1;min-width:0;">
+        <h3 style="font-size:0.875rem;font-weight:700;color:var(--txt-primary);letter-spacing:-0.01em;">${escapeHtml(order.id)}</h3>
+        <p style="font-size:0.75rem;color:var(--txt-secondary);margin-top:2px;">Proveedor: ${escapeHtml(order.supplier)}</p>
+        <p style="font-size:0.7rem;color:var(--txt-muted);">Fecha: ${escapeHtml(order.date)}</p>
         ${order.deliveryDate
-          ? `<p class="text-xs text-gray-500">Entrega: ${escapeHtml(order.deliveryDate)}</p>`
+          ? `<p style="font-size:0.7rem;color:var(--txt-muted);">Entrega: ${escapeHtml(order.deliveryDate)}</p>`
           : ''}
       </div>`;
 
-    html += '<div class="flex gap-2">';
+    html += '<div style="display:flex;gap:6px;flex-shrink:0;">';
 
-    /* Re-enviar por WhatsApp — AMBOS roles */
     html += `<button data-id="${escapeHtml(order.id)}"
       onclick="window.shareOrderWhatsApp(this.dataset.id)"
       title="Reenviar por WhatsApp"
@@ -413,7 +446,6 @@ function renderPedidosTab() {
       </svg>
     </button>`;
 
-    /* Eliminar pedido — SOLO admin */
     if (isAdmin) {
       html += `<button data-id="${escapeHtml(order.id)}"
         onclick="window.deleteOrder(this.dataset.id)"
@@ -429,10 +461,10 @@ function renderPedidosTab() {
       </button>`;
     }
 
-    html += '</div>'; /* cierra div.flex.gap-2 (botones) */
-    html += '</div>'; /* cierra div.flex.justify-between */
+    html += '</div>'; /* cierra botones */
+    html += '</div>'; /* cierra flex header */
 
-    /* Tabla productos del pedido */
+    /* Tabla productos */
     html += '<div class="overflow-x-auto"><table class="w-full">'
           + '<thead class="bg-gradient-to-r from-purple-600 to-blue-600">'
           + '<tr>'
@@ -446,31 +478,29 @@ function renderPedidosTab() {
       html += `<tr>
         <td class="px-3 py-2 text-gray-900 text-sm">${escapeHtml(p.name)}</td>
         <td class="px-3 py-2 text-center text-gray-600 text-sm">${escapeHtml(p.unit)}</td>
-        <td class="px-3 py-2 text-center font-semibold text-gray-900 text-sm">
-          ${p.quantity}
-        </td>
+        <td class="px-3 py-2 text-center font-semibold text-gray-900 text-sm">${p.quantity}</td>
       </tr>`;
     });
-
     html += '</tbody></table></div>';
 
-    html += `<div class="mt-2 text-right">
-      <span class="text-sm font-bold text-gray-900">
+    html += `<div style="margin-top:8px;text-align:right;">
+      <span style="font-size:0.8rem;font-weight:700;color:var(--txt-primary);">
         Total: ${(order.total || 0).toFixed(2)}
       </span>
     </div>`;
 
     if (order.note) {
-      html += `<div class="mt-2 p-2 bg-purple-50 rounded">
-        <p class="text-xs text-gray-600">Nota: ${escapeHtml(order.note)}</p>
+      html += `<div style="margin-top:8px;padding:8px 10px;background:var(--accent-dim);
+                           border-radius:var(--r-sm);border:1px solid var(--accent-dim2);">
+        <p style="font-size:0.75rem;color:var(--txt-secondary);">📝 ${escapeHtml(order.note)}</p>
       </div>`;
     }
 
     html += '</div>'; /* cierra card pedido */
   });
 
-  html += '</div>'; /* cierra div.space-y-4 (historial) */
-  html += '</div>'; /* cierra div.space-y-4 raíz */
+  html += '</div>'; /* cierra space-y-4 historial */
+  html += '</div>'; /* cierra space-y-4 raíz */
   return html;
 }
 
@@ -484,26 +514,25 @@ function renderInventarioTab() {
 }
 
 function renderAuditoriaSeleccion() {
-  const isAdmin       = state.userRole === 'admin';
+  const isAdmin        = state.userRole === 'admin';
   const totalCompletas = auditoriaTotalAreasCompletadas();
-  const porcentaje    = Math.round((totalCompletas / 3) * 100);
+  const porcentaje     = Math.round((totalCompletas / 3) * 100);
   const todasCompletas = auditoriaTodasCompletas();
 
   let html = '<div class="audit-screen">';
 
-  /* Header + barra de progreso */
   html += '<div class="bg-white rounded-xl p-4 sm:p-5 mb-4 shadow-md">';
   html += '<div class="flex items-start justify-between gap-3 mb-3"><div>';
   html += '<p class="audit-header-title">Auditoría Física Ciega</p>';
-  html += '<p class="audit-header-sub">Seleccione el área de auditoría para iniciar el conteo físico.</p>';
+  html += '<p class="audit-header-sub">Selecciona el área de auditoría para iniciar el conteo físico.</p>';
   html += '</div>';
 
   html += `<button onclick="window.auditoriaResetear()"
     title="Iniciar nueva auditoría"
-    style="flex-shrink:0;padding:6px 10px;border-radius:var(--r-md);
-           background:var(--red-dim);border:1px solid rgba(239,68,68,0.18);
-           color:var(--red-text);font-size:0.7rem;font-weight:600;cursor:pointer;"
-    class="flex items-center gap-1">
+    style="flex-shrink:0;padding:6px 12px;border-radius:100px;
+           background:var(--red-dim);border:1px solid rgba(255,69,58,0.18);
+           color:var(--red-text);font-size:0.7rem;font-weight:700;cursor:pointer;"
+    class="flex items-center gap-1.5">
     <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
         d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581
@@ -512,11 +541,10 @@ function renderAuditoriaSeleccion() {
     Nueva auditoría
   </button>`;
 
-  html += '</div>'; /* cierra div.flex.items-start */
+  html += '</div>';
 
-  /* Barra de progreso */
   html += `<div class="flex items-center gap-3">
-    <div style="font-size:0.68rem;font-weight:600;color:var(--txt-muted);white-space:nowrap;">
+    <div style="font-size:0.68rem;font-weight:700;color:var(--txt-muted);white-space:nowrap;">
       ${totalCompletas} / 3 áreas
     </div>
     <div class="audit-progress-bar" style="flex:1;">
@@ -529,13 +557,11 @@ function renderAuditoriaSeleccion() {
     </div>
   </div>`;
 
-  html += '</div>'; /* cierra div.bg-white (header) */
+  html += '</div>';
 
-  /* Paneles */
   html += renderAuditUserPanel();
   html += renderAuditComparePanel();
 
-  /* Cards de área */
   html += '<div class="flex flex-col gap-3 mb-4">';
   ['almacen', 'barra1', 'barra2'].forEach(area => {
     const isCompleta = state.auditoriaStatus[area] === 'completada';
@@ -553,19 +579,15 @@ function renderAuditoriaSeleccion() {
         ${isCompleta ? '✓ Completada' : '⏳ Pendiente'}
       </span>
     </div>`;
-    html += `<svg class="audit-area-arrow w-5 h-5" fill="none" stroke="currentColor"
-      viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-        d="M9 5l7 7-7 7"/>
+    html += `<svg class="audit-area-arrow w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
     </svg>`;
-    html += '</div>'; /* cierra audit-area-card */
+    html += '</div>';
   });
-  html += '</div>'; /* cierra div.flex.flex-col (cards área) */
+  html += '</div>';
 
-  /* Botón exportar — SOLO admin */
   if (todasCompletas && isAdmin) {
-    html += `<button onclick="window.exportarAuditoriaExcel()"
-      class="audit-export-btn">
+    html += `<button onclick="window.exportarAuditoriaExcel()" class="audit-export-btn">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
           d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
@@ -574,7 +596,7 @@ function renderAuditoriaSeleccion() {
     </button>`;
   }
 
-  html += '</div>'; /* cierra div.audit-screen */
+  html += '</div>';
   return html;
 }
 
@@ -585,13 +607,11 @@ function renderAuditoriaConteo() {
 
   let html = '<div>';
 
-  /* Header sticky */
   html += '<div class="audit-count-header">';
   html += `<div class="flex items-center gap-2 mb-2">
     <button onclick="window.auditoriaVolverSeleccion()" class="audit-back-btn">
       <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
-          d="M15 19l-7-7 7-7"/>
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/>
       </svg>Volver
     </button>
     <span class="audit-count-area-badge">
@@ -601,146 +621,139 @@ function renderAuditoriaConteo() {
   html += `<p style="font-size:0.7rem;color:var(--txt-muted);">
     Conteo ciego · ${filtered.length} productos
   </p>`;
-  html += '</div>'; /* cierra audit-count-header */
+  html += '</div>';
 
-  /* Búsqueda + filtro por grupo */
   const _invGroups = getAvailableGroups();
   html += `<div class="mb-3 flex gap-2">
-    <input type="text" placeholder="Buscar..."
+    <input type="text" placeholder="Buscar…"
       value="${escapeHtml(state.searchTerm)}"
       oninput="window.updateSearchTerm(this.value)"
-      class="flex-1 min-w-0 px-3 py-2 bg-white text-gray-900 border border-gray-200
-             rounded-lg text-sm">
-    <select onchange="window.updateSelectedGroup(this.value)"
-      class="px-2 py-2 bg-white text-gray-900 border border-gray-200 rounded-lg text-sm flex-shrink-0">`;
+      class="field-input">
+    <select onchange="window.updateSelectedGroup(this.value)" class="field-select" style="flex-shrink:0;">`;
   _invGroups.forEach(g => {
     html += `<option value="${escapeHtml(g)}"${state.selectedGroup === g ? ' selected' : ''}>${escapeHtml(g)}</option>`;
   });
-  html += `</select>
-  </div>`;
+  html += `</select></div>`;
 
-  /* Tarjetas de producto */
   html += '<div class="space-y-2">';
   filtered.forEach(p => {
     const conteo   = state.auditoriaConteo[p.id]?.[area] || { enteras: 0, abiertas: [] };
     const hasCount = conteo.enteras > 0 ||
                      (conteo.abiertas && conteo.abiertas.some(a => a > 0));
 
-    html += `<div class="bg-white rounded-xl p-3 shadow-md border
-      ${hasCount ? 'border-green-400/40' : 'border-transparent'}"
+    html += `<div class="bg-white rounded-xl p-3 shadow-md"
+      style="border:1px solid ${hasCount ? 'rgba(48,209,88,0.30)' : 'var(--border)'};cursor:pointer;"
       data-id="${escapeHtml(p.id)}"
-      onclick="window.openInventarioModal(this.dataset.id)"
-      style="cursor:pointer;">`;
+      onclick="window.openInventarioModal(this.dataset.id)">`;
 
     html += '<div class="flex items-center justify-between">';
-    html += `<div class="flex-1 min-w-0">
-      <span class="font-medium text-sm text-gray-900">${escapeHtml(p.name)}</span>
-      <div class="text-xs text-gray-500 mt-0.5">
+    html += `<div style="flex:1;min-width:0;">
+      <span style="font-weight:600;font-size:0.875rem;color:var(--txt-primary);">${escapeHtml(p.name)}</span>
+      <div style="font-size:0.7rem;color:var(--txt-muted);margin-top:2px;">
         ${escapeHtml(p.group || 'General')} · ${escapeHtml(p.unit || '')}
       </div>
     </div>`;
 
-    html += '<div class="flex-shrink-0 ml-2">';
+    html += '<div style="flex-shrink:0;margin-left:8px;">';
     if (hasCount) {
-      html += `<div class="text-right">
-        <div class="text-sm font-bold text-green-600">${conteo.enteras} ent.</div>`;
+      html += `<div style="text-align:right;">
+        <div style="font-size:0.875rem;font-weight:700;color:var(--green);">${conteo.enteras} ent.</div>`;
       if (conteo.abiertas && conteo.abiertas.some(a => a > 0)) {
-        html += `<div class="text-xs text-amber-500">
+        html += `<div style="font-size:0.75rem;color:var(--amber);">
           + ${conteo.abiertas.filter(a => a > 0).length} ab.
         </div>`;
       }
       html += '</div>';
     } else {
-      html += '<span class="text-xs text-gray-400 italic">Sin contar</span>';
+      html += '<span style="font-size:0.75rem;color:var(--txt-muted);font-style:italic;">Sin contar</span>';
     }
-    html += '</div>'; /* cierra flex-shrink-0 */
-    html += '</div>'; /* cierra flex.items-center */
+    html += '</div></div>';
 
     html += renderAuditTrailForProduct(p.id, area);
-    html += '</div>'; /* cierra card producto conteo */
+    html += '</div>';
   });
-  html += '</div>'; /* cierra div.space-y-2 */
+  html += '</div>';
 
-  html += `<button onclick="window.auditoriaFinalizarConteo()"
-    class="audit-finish-btn">
+  html += `<button onclick="window.auditoriaFinalizarConteo()" class="audit-finish-btn">
     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-        d="M5 13l4 4L19 7"/>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
     </svg>
     Finalizar conteo de ${areaLabel}
   </button>`;
 
-  html += '</div>'; /* cierra div raíz */
+  html += '</div>';
   return html;
 }
 
 /* ═══════════════════════════════════════════════════════════════
    TAB: HISTORIA
-   ┌──────────────────────────────────┬───────┬──────┐
-   │ Elemento                         │ admin │ user │
-   ├──────────────────────────────────┼───────┼──────┤
-   │ Selector de área                 │  ✓    │  ✓   │
-   │ "💾 Guardar inventario"          │  ✓    │  ✓   │
-   │ "📊 Excel" (exportar)            │  ✓    │  ✗   │
-   │ "🗑 Reset" (borrar todo)         │  ✓    │  ✗   │
-   │ Lista de inventarios guardados   │  ✓    │  ✓   │
-   │ Botón compartir WhatsApp         │  ✓    │  ✓   │
-   │ Botón eliminar inventario        │  ✓    │  ✗   │
-   └──────────────────────────────────┴───────┴──────┘
 ═══════════════════════════════════════════════════════════════ */
 function renderHistoriaTab() {
   const isAdmin = state.userRole === 'admin';
-
   let html = '<div class="space-y-4">';
 
-  /* ── Guardar conteo actual ── */
   html += '<div class="bg-white rounded-xl p-4 shadow-md">';
-  html += '<h3 class="text-lg font-bold text-gray-900 mb-3">Guardar conteo actual</h3>';
+  html += `<h3 style="font-size:0.8rem;font-weight:700;color:var(--txt-primary);
+                      letter-spacing:0.03em;text-transform:uppercase;margin-bottom:12px;">
+    Guardar conteo actual
+  </h3>`;
 
-  /* Selector de área — AMBOS roles */
-  html += '<div class="flex gap-2 flex-wrap mb-3">';
+  html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
   AREA_KEYS.forEach(area => {
     const isActive = state.selectedArea === area;
     html += `<button onclick="window.switchArea('${area}')"
-      class="area-btn px-3 py-2 rounded-lg text-sm font-medium border ${
-        isActive
-          ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white border-transparent'
-          : 'border-gray-200 text-gray-600'
-      }">
+      class="area-btn px-4 py-2 rounded-full text-sm font-semibold border transition-all"
+      style="${isActive
+        ? 'background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 2px 8px rgba(10,132,255,0.25);'
+        : 'background:transparent;border-color:var(--border-mid);color:var(--txt-secondary);'}">
       ${AREAS[area]}
     </button>`;
   });
-  html += '</div>'; /* cierra div.flex.gap-2 (selector área) */
+  html += '</div>';
 
-  /* Guardar — AMBOS roles */
   html += `<button onclick="window.saveInventory('${state.selectedArea}')"
-    class="w-full py-2 bg-gradient-to-r from-green-500 to-emerald-500
-           text-white rounded-lg font-semibold text-sm">
+    class="w-full py-3 bg-gradient-to-r from-green-500 to-emerald-500
+           text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-2">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+        d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3
+           m-1 4l-3 3m0 0l-3-3m3 3V4"/>
+    </svg>
     💾 Guardar inventario de ${AREAS[state.selectedArea]}
   </button>`;
 
-  html += '</div>'; /* cierra div.bg-white (guardar conteo) */
+  html += '</div>';
 
-  /* Excel + Reset — SOLO admin */
   if (isAdmin) {
-    html += `<div class="flex gap-2 mb-2">
+    html += `<div style="display:flex;gap:8px;margin-bottom:4px;">
       <button onclick="window.exportToExcel('INVENTARIO')"
         class="flex-1 py-2 bg-gradient-to-r from-green-600 to-emerald-600
-               text-white rounded-lg text-sm font-semibold">
-        📊 Excel
+               text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+        </svg>
+        Excel
       </button>
       <button onclick="window.resetAllInventario()"
         class="flex-1 py-2 bg-gradient-to-r from-red-500 to-orange-500
-               text-white rounded-lg text-sm font-semibold">
-        🗑 Reset
+               text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0
+               01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1
+               1 0 00-1 1v3M4 7h16"/>
+        </svg>
+        Reset
       </button>
     </div>`;
   }
 
-  /* ── Listado de inventarios guardados ── */
   if (state.inventories.length === 0) {
-    html += '<div class="bg-white rounded-xl p-8 text-center shadow-md">'
-          + '<p class="text-gray-500">No hay inventarios guardados</p></div>';
+    html += `<div class="bg-white rounded-xl p-8 text-center shadow-md">
+      <div style="font-size:2rem;margin-bottom:8px;">🗂</div>
+      <p class="text-gray-500">No hay inventarios guardados</p>
+    </div>`;
   } else {
     html += '<div class="space-y-3">';
     state.inventories.forEach((inv, idx) => {
@@ -748,17 +761,16 @@ function renderHistoriaTab() {
       html += `<div class="bg-white rounded-xl p-4 shadow-md"
         style="animation:tabContentIn 0.3s ease-out ${delay}ms both">`;
 
-      html += `<div class="flex justify-between items-start mb-2">
+      html += `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
         <div>
-          <h3 class="font-bold text-gray-900 text-sm">${escapeHtml(inv.id)}</h3>
-          <p class="text-xs text-gray-500">
+          <h3 style="font-weight:700;color:var(--txt-primary);font-size:0.875rem;">${escapeHtml(inv.id)}</h3>
+          <p style="font-size:0.7rem;color:var(--txt-muted);margin-top:2px;">
             ${escapeHtml(inv.date)} · ${escapeHtml(AREAS[inv.area] || inv.area)}
           </p>
         </div>`;
 
-      html += '<div class="flex gap-2">';
+      html += '<div style="display:flex;gap:6px;">';
 
-      /* Compartir WhatsApp — AMBOS roles */
       html += `<button data-id="${escapeHtml(inv.id)}"
         onclick="window.shareInventoryWhatsApp(this.dataset.id)"
         class="p-2 bg-gradient-to-br from-green-500 to-emerald-500
@@ -773,7 +785,6 @@ function renderHistoriaTab() {
         </svg>
       </button>`;
 
-      /* Eliminar inventario — SOLO admin */
       if (isAdmin) {
         html += `<button data-id="${escapeHtml(inv.id)}"
           onclick="window.deleteInventory(this.dataset.id)"
@@ -789,22 +800,24 @@ function renderHistoriaTab() {
         </button>`;
       }
 
-      html += '</div>'; /* cierra div.flex.gap-2 (botones inventario) */
-      html += '</div>'; /* cierra div.flex.justify-between */
+      html += '</div></div>';
 
-      html += `<p class="text-xs text-gray-600">
-        Total: <strong>${(inv.totalProducts || 0).toFixed(2)}</strong>
+      html += `<p style="font-size:0.75rem;color:var(--txt-secondary);">
+        Total: <strong style="color:var(--txt-primary);">${(inv.totalProducts || 0).toFixed(2)}</strong>
         · ${(inv.products || []).length} productos
       </p>`;
 
-      html += '</div>'; /* cierra card inventario */
+      html += '</div>';
     });
-    html += '</div>'; /* cierra div.space-y-3 */
+    html += '</div>';
   }
 
-  /* ── Toggle de sincronización — AMBOS roles ── */
+  /* Toggle de sincronización */
   html += '<div class="bg-white rounded-xl p-4 shadow-md">';
-  html += '<h3 class="text-sm font-bold text-gray-900 mb-3">⚙️ Control de sincronización</h3>';
+  html += `<h3 style="font-size:0.8rem;font-weight:700;color:var(--txt-primary);
+                      margin-bottom:10px;letter-spacing:0.02em;">
+    ⚙️ CONTROL DE SINCRONIZACIÓN
+  </h3>`;
   const syncOn = state.syncEnabled !== false;
   html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
     <div>
@@ -814,37 +827,21 @@ function renderHistoriaTab() {
       <div style="font-size:0.7rem;color:var(--txt-muted);margin-top:2px;">
         ${syncOn
           ? 'Los datos se suben automáticamente a la nube.'
-          : 'Los datos se guardan solo localmente hasta que actives la sync.'}
+          : 'Los datos se guardan solo localmente.'}
       </div>
     </div>
     <button onclick="window.toggleSync()"
-      style="padding:8px 16px;border-radius:var(--r-md);font-size:0.78rem;font-weight:600;
-             cursor:pointer;min-height:auto;flex-shrink:0;
+      style="padding:8px 16px;border-radius:100px;font-size:0.78rem;font-weight:700;
+             cursor:pointer;min-height:auto;flex-shrink:0;letter-spacing:0.02em;
              background:${syncOn ? 'var(--red-dim)' : 'var(--accent-dim)'};
-             border:1px solid ${syncOn ? 'rgba(239,68,68,.22)' : 'var(--accent-dim2)'};
+             border:1px solid ${syncOn ? 'rgba(255,69,58,.22)' : 'var(--accent-dim2)'};
              color:${syncOn ? 'var(--red-text)' : 'var(--accent)'};">
       ${syncOn ? '⏸ Pausar' : '▶ Activar'}
     </button>
   </div>`;
   html += '</div>';
 
-  /* ── Reportes publicados — AMBOS roles ── */
-  html += '<h3 class="text-base font-bold text-gray-900">📊 Reportes publicados</h3>';
-
-  /* Botón publicar — SOLO admin */
-  if (isAdmin) {
-    html += `<button onclick="window.openPublicarReporteModal()"
-      style="width:100%;padding:10px;background:linear-gradient(135deg,#065f46,#047857);
-             border:1px solid rgba(34,197,94,.28);border-radius:var(--r-lg);
-             color:#86efac;font-size:0.82rem;font-weight:600;cursor:pointer;
-             display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px;">
-      📊 Generar y publicar reporte final
-    </button>`;
-  }
-
-  html += renderReportesPublicados();
-
-  html += '</div>'; /* cierra div.space-y-4 raíz */
+  html += '</div>';
   return html;
 }
 
@@ -859,7 +856,7 @@ function renderNotificacionesTab() {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   TAB: AJUSTES  (admin ve pendientes; usuario ve historial propio)
+   TAB: AJUSTES
 ═══════════════════════════════════════════════════════════════ */
 function renderAjustesTab() {
   const isAdmin = state.userRole === 'admin';
@@ -868,24 +865,29 @@ function renderAjustesTab() {
   if (isAdmin) {
     const count = state.ajustesPendientes?.length || 0;
     html += `<div class="bg-white rounded-xl p-4 shadow-md">
-      <h3 class="text-sm font-bold text-gray-900 mb-3">
-        🔧 Ajustes pendientes
-        ${count > 0 ? `<span style="background:var(--accent);color:#fff;border-radius:10px;
-          padding:1px 7px;font-size:0.60rem;margin-left:4px;">${count}</span>` : ''}
+      <h3 style="font-size:0.8rem;font-weight:700;color:var(--txt-primary);
+                 letter-spacing:0.02em;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+        🔧 AJUSTES PENDIENTES
+        ${count > 0
+          ? `<span style="background:var(--red);color:#fff;border-radius:100px;
+               padding:1px 8px;font-size:0.60rem;font-weight:700;">${count}</span>`
+          : ''}
       </h3>
       ${renderAjustesPendientesPanel()}
     </div>`;
   } else {
-    /* Usuario: cola local pendiente de subir */
     const pending = state.adjustmentsPending || [];
     html += '<div class="bg-white rounded-xl p-4 shadow-md">';
-    html += '<h3 class="text-sm font-bold text-gray-900 mb-2">📤 Mis ajustes enviados</h3>';
+    html += `<h3 style="font-size:0.8rem;font-weight:700;color:var(--txt-primary);
+                        letter-spacing:0.02em;margin-bottom:10px;">
+      📤 MIS AJUSTES ENVIADOS
+    </h3>`;
     if (pending.length === 0) {
-      html += '<p style="font-size:0.78rem;color:var(--txt-muted);">Sin ajustes pendientes</p>';
+      html += `<p style="font-size:0.78rem;color:var(--txt-muted);">Sin ajustes pendientes</p>`;
     } else {
       pending.forEach(a => {
         html += `<div style="background:var(--surface);border:1px solid var(--border);
-                              border-radius:var(--r-md);padding:8px 12px;margin-bottom:6px;
+                              border-radius:var(--r-md);padding:9px 12px;margin-bottom:6px;
                               font-size:0.75rem;color:var(--txt-secondary);">
           <strong style="color:var(--txt-primary);">${escapeHtml(a.productoName)}</strong>
           · ${escapeHtml(a.campoLabel)}: ${escapeHtml(a.valorAnterior || '—')} → ${escapeHtml(a.valorNuevo)}
