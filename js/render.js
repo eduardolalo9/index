@@ -905,4 +905,3 @@ function renderAjustesTab() {
 /* ── Bindings globales ── */
 window.switchTab = switchTab;
 window.renderTab = renderTab;
-
