@@ -45,6 +45,23 @@ const _el = id => document.getElementById(id);
 function _showModal(id) { _el(id)?.classList.remove('hidden'); }
 function _hideModal(id) { _el(id)?.classList.add('hidden'); }
 
+// ── Formateo de cantidades para WhatsApp ──────────────────────
+// Cantidades individuales: enteros sin decimales, decimales con
+// 3 lugares fijos sin cero inicial (ej. 0.350 → .350, 1 → 1)
+function _fmtQty(qty) {
+  const n = parseFloat(qty) || 0;
+  if (Number.isInteger(n)) return String(n);
+  let s = n.toFixed(3);                    // "0.350"
+  if (s.startsWith('0.')) s = s.slice(1); // ".350"
+  return s;
+}
+
+// Total: sin ceros finales innecesarios (ej. 3.150 → 3.15, 4.000 → 4)
+function _fmtTotal(qty) {
+  const n = parseFloat(qty) || 0;
+  return parseFloat(n.toFixed(3)).toString();
+}
+
 // Estado interno del modal de producto
 let _editingProductId = null;
 
@@ -188,6 +205,8 @@ function addToCart(productId) {
 // ══════════════════════════════════════════════════════════════
 
 // FIX BUG-3: llena #orderProductsTable, #orderTotal y #emptyCart
+// ① Decimales: input editable con step 0.001
+// ② Sin botones + / −
 function _refreshOrderModal() {
   const tbody   = _el('orderProductsTable');
   const totalEl = _el('orderTotal');
@@ -202,19 +221,24 @@ function _refreshOrderModal() {
   }
 
   emptyEl?.classList.add('hidden');
-  const totalItems = state.cart.reduce((s, i) => s + i.quantity, 0);
-  if (totalEl) totalEl.textContent = `Total: ${totalItems}`;
+  const totalQty = state.cart.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0);
+  if (totalEl) totalEl.textContent = `Total: ${_fmtTotal(totalQty)}`;
 
   tbody.innerHTML = state.cart.map((item, idx) => `
     <tr class="hover:bg-gray-50">
       <td class="px-4 py-3 text-gray-900 text-sm font-medium">${escapeHtml(item.name)}</td>
       <td class="px-4 py-3 text-center text-gray-600 text-sm">${escapeHtml(item.unit || '')}</td>
       <td class="px-4 py-3 text-center">
-        <div class="flex items-center justify-center gap-2">
-          <button onclick="window._cartDec(${idx})" style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;background:#f9fafb;font-size:1rem;cursor:pointer;line-height:1;">−</button>
-          <span class="font-bold text-gray-900 min-w-[24px] text-center">${item.quantity}</span>
-          <button onclick="window._cartInc(${idx})" style="width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;background:#f9fafb;font-size:1rem;cursor:pointer;line-height:1;">+</button>
-        </div>
+        <input
+          type="number"
+          min="0.001"
+          step="0.001"
+          value="${parseFloat(item.quantity) || 1}"
+          onchange="window._cartSetQty(${idx}, this.value)"
+          style="width:90px;padding:5px 8px;border:1.5px solid #e5e7eb;border-radius:8px;
+                 text-align:center;font-weight:bold;font-size:0.95rem;color:#111827;
+                 background:#f9fafb;outline:none;"
+          onfocus="this.select()">
       </td>
       <td class="px-4 py-3 text-center">
         <button onclick="window._cartRem(${idx})" style="padding:3px 10px;background:#fee2e2;color:#dc2626;border:none;border-radius:6px;font-size:0.75rem;cursor:pointer;">✕ Quitar</button>
@@ -233,16 +257,17 @@ function openOrderModal() {
   if (fDate)     fDate.value     = '';
   if (fNote)     fNote.value     = '';
 
-  window._cartInc = idx => {
-    if (state.cart[idx]) { state.cart[idx].quantity += 1; _refreshOrderModal(); saveToLocalStorage(); }
-  };
-  window._cartDec = idx => {
-    if (state.cart[idx]) {
-      state.cart[idx].quantity -= 1;
-      if (state.cart[idx].quantity <= 0) state.cart.splice(idx, 1);
+  // ① Decimal: _cartSetQty reemplaza _cartInc / _cartDec
+  window._cartSetQty = (idx, val) => {
+    const qty = parseFloat(val);
+    if (isNaN(qty) || qty <= 0) {
+      state.cart.splice(idx, 1);
       if (state.cart.length === 0) { closeOrderModal(); return; }
-      _refreshOrderModal(); saveToLocalStorage();
+    } else {
+      state.cart[idx].quantity = qty;
     }
+    _refreshOrderModal();
+    saveToLocalStorage();
   };
   window._cartRem = idx => {
     state.cart.splice(idx, 1);
@@ -258,14 +283,14 @@ function openOrderModal() {
 // FIX BUG-2: esta función no existía → Cancelar no hacía nada
 function closeOrderModal() {
   _hideModal('orderModal');
-  delete window._cartInc;
-  delete window._cartDec;
+  delete window._cartSetQty;
   delete window._cartRem;
   saveToLocalStorage();
   _render();
 }
 
 // FIX BUG-2: esta función no existía → "Compartir WhatsApp" no hacía nada
+// ③ Nuevo formato de mensaje WhatsApp
 function createOrder() {
   if (state.cart.length === 0) { showNotification('🛒 El carrito está vacío'); return; }
 
@@ -273,29 +298,36 @@ function createOrder() {
   const deliveryDate = _el('orderDeliveryDate')?.value || '';
   const note         = (_el('orderNote')?.value || '').trim();
   const fecha        = new Date().toLocaleDateString('es-MX');
-  const orderId      = 'PED-' + Date.now();
+  const orderId      = 'BARRA-' + Date.now(); // ③ nuevo prefijo
+
+  const totalQty = state.cart.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0);
 
   const order = {
     id: orderId, supplier, date: fecha,
     deliveryDate: deliveryDate || null,
     note: note || null,
-    total:    state.cart.reduce((s, i) => s + i.quantity, 0),
+    total:    totalQty,
     products: state.cart.map(i => ({ ...i })),
   };
   state.orders.unshift(order);
   if (state.orders.length > 100) state.orders.pop();
 
+  const SEP = '━━━━━━━━━━━━━━━━━━━━━━━━━━';
+
+  // ③ Formato exacto requerido
   const lines = [
-    `📦 *Pedido ${orderId}*`,
-    `Proveedor: *${supplier}*`,
-    `Fecha: ${fecha}`,
-    deliveryDate ? `Entrega: ${deliveryDate}` : null,
-    '',
-    '*Productos:*',
-    ...state.cart.map(i => `• ${i.name} (${i.unit || 'Unid'}): *${i.quantity}*`),
-    '',
+    `🛒 PEDIDO ${orderId}`,
+    SEP,
+    `🏪 Proveedor: ${supplier}`,
+    deliveryDate ? `📅 Entrega: ${deliveryDate}` : null,
+    SEP,
+    'PRODUCTOS:',
+    ...state.cart.map((i, n) =>
+      `${n + 1}. ${i.name} — ${_fmtQty(i.quantity)} (${i.unit || 'Unid'})`
+    ),
+    SEP,
+    `📦 Total: ${_fmtTotal(totalQty)}`,
     note ? `📝 Nota: ${note}` : null,
-    `Total items: *${order.total}*`,
   ].filter(l => l !== null).join('\n');
 
   state.cart = [];
@@ -310,17 +342,25 @@ function createOrder() {
 function shareOrderWhatsApp(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) { showNotification('⚠️ Pedido no encontrado'); return; }
+
+  const SEP = '━━━━━━━━━━━━━━━━━━━━━━━━━━';
+  const totalQty = (order.products || []).reduce((s, p) => s + (parseFloat(p.quantity) || 0), 0);
+
   const lines = [
-    `📦 *Pedido ${order.id}*`,
-    `Proveedor: ${order.supplier || '—'}`,
-    `Fecha: ${order.date || '—'}`,
-    order.deliveryDate ? `Entrega: ${order.deliveryDate}` : null,
-    '',
-    '*Productos:*',
-    ...(order.products || []).map(p => `• ${p.name} (${p.unit || 'Unid'}): *${p.quantity}*`),
-    '',
-    order.note ? `📝 ${order.note}` : null,
+    `🛒 PEDIDO ${order.id}`,
+    SEP,
+    `🏪 Proveedor: ${order.supplier || '—'}`,
+    order.deliveryDate ? `📅 Entrega: ${order.deliveryDate}` : null,
+    SEP,
+    'PRODUCTOS:',
+    ...(order.products || []).map((p, n) =>
+      `${n + 1}. ${p.name} — ${_fmtQty(p.quantity)} (${p.unit || 'Unid'})`
+    ),
+    SEP,
+    `📦 Total: ${_fmtTotal(totalQty)}`,
+    order.note ? `📝 Nota: ${order.note}` : null,
   ].filter(l => l !== null).join('\n');
+
   window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
 }
 
