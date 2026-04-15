@@ -311,31 +311,85 @@
         </div>
 
         <!-- MODAL: Inventario / Conteo de botellas -->
-        <div id="inventarioModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-end md:items-center justify-center z-50 animate-fadeIn hidden" role="dialog" aria-modal="true" aria-labelledby="inventarioModalTitle">
-            <div class="bg-white shadow-2xl max-w-sm w-full p-4 animate-slideUp max-h-[90vh] overflow-y-auto">
-                <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4"></div>
-                <h2 class="text-xl font-bold text-gray-900 mb-1" id="inventarioModalTitle">Contar botellas</h2>
-                <p class="text-sm text-gray-500 mb-2" id="inventarioModalSubtitle"></p>
-                <div class="mb-4">
-                    <label for="inv_enteras" class="block text-sm font-semibold text-gray-700 mb-2">🍾 Botellas Enteras</label>
-                    <input type="number" id="inv_enteras" min="0" step="1" value="0"
-                           oninput="if(parseFloat(this.value)<0||isNaN(parseFloat(this.value)))this.value=0;"
-                           class="w-full px-4 py-2 bg-white text-gray-900 border-2 border-blue-300 rounded text-center text-base font-bold">
-                </div>
-                <div class="mb-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <label id="inv_abiertasLabel" class="block text-sm font-semibold text-gray-700">
-                            🍷 Botellas Abiertas <span id="inv_abiertasUnidadHint" class="text-xs font-normal text-orange-500"></span>
-                        </label>
-                        <button onclick="addAbiertaInModal()" class="text-xs px-2 py-1 bg-gradient-to-r from-orange-400 to-amber-400 text-white rounded font-semibold" style="min-height:auto">+ Agregar</button>
+        <div id="inventarioModal"
+             class="fixed inset-0 flex items-center justify-center z-50 animate-fadeIn hidden"
+             style="padding: 16px;"
+             role="dialog" aria-modal="true" aria-labelledby="inventarioModalTitle">
+
+            <div id="inventarioModalCard" class="inv-modal-card">
+
+                <!-- ── Header ── -->
+                <div class="inv-modal-header">
+                    <div class="inv-modal-header__info">
+                        <div class="inv-modal-header__icon">🍾</div>
+                        <div>
+                            <h2 class="inv-modal-header__title" id="inventarioModalTitle">Contar botellas</h2>
+                            <p class="inv-modal-header__sub" id="inventarioModalSubtitle"></p>
+                        </div>
                     </div>
-                    <div id="inv_abiertasContainer" class="space-y-2" aria-labelledby="inv_abiertasLabel"></div>
+                    <button type="button" onclick="closeInventarioModal()"
+                            class="inv-modal-close" aria-label="Cerrar">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                                  d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
                 </div>
-                <div class="flex gap-3 mt-4">
-                    <button type="button" onclick="closeInventarioModal()" class="flex-1 px-4 py-2 border border-gray-200 text-gray-900 rounded font-medium">Cancelar</button>
-                    <button type="button" onclick="saveInventarioModal()" class="flex-1 px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded font-semibold">Guardar conteo</button>
+
+                <!-- ── Divider ── -->
+                <div class="inv-modal-divider"></div>
+
+                <!-- ── Cuerpo (scroll) ── -->
+                <div class="inv-modal-body">
+
+                    <!-- Botellas Enteras -->
+                    <div class="inv-modal-section">
+                        <label for="inv_enteras" class="inv-modal-label">
+                            <span class="inv-modal-label__icon">🍾</span>
+                            Botellas Enteras
+                            <span class="inv-modal-label__badge">unidades</span>
+                        </label>
+                        <input type="number" id="inv_enteras" min="0" step="1" value="0"
+                               oninput="if(parseFloat(this.value)<0||isNaN(parseFloat(this.value)))this.value=0;"
+                               class="inv-modal-input-enteras">
+                    </div>
+
+                    <!-- Botellas Abiertas -->
+                    <div class="inv-modal-section">
+                        <div class="inv-modal-section__header">
+                            <label id="inv_abiertasLabel" class="inv-modal-label" style="margin-bottom:0;">
+                                <span class="inv-modal-label__icon">🍷</span>
+                                Botellas Abiertas
+                                <span id="inv_abiertasUnidadHint" class="inv-modal-label__hint"></span>
+                            </label>
+                            <button type="button" onclick="addAbiertaInModal()"
+                                    class="inv-modal-btn-add" style="min-height:auto;">
+                                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+                                </svg>
+                                Agregar
+                            </button>
+                        </div>
+                        <div id="inv_abiertasContainer" class="space-y-2" aria-labelledby="inv_abiertasLabel"></div>
+                    </div>
+
+                </div><!-- /.inv-modal-body -->
+
+                <!-- ── Footer ── -->
+                <div class="inv-modal-footer">
+                    <button type="button" onclick="closeInventarioModal()" class="inv-modal-btn-cancel">
+                        Cancelar
+                    </button>
+                    <button type="button" onclick="saveInventarioModal()" class="inv-modal-btn-save">
+                        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M5 13l4 4L19 7"/>
+                        </svg>
+                        Guardar conteo
+                    </button>
                 </div>
-            </div>
+
+            </div><!-- /#inventarioModalCard -->
         </div>
 
         <!-- TOAST -->
