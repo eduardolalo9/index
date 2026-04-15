@@ -75,14 +75,13 @@
         <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden">
         <input type="file" id="importDataInput" accept=".json" class="hidden">
 
-        <div id="sbOverlay" onclick="sbClose()"></div>
 
         <!-- SIDEBAR
              FIX BUG-8: Añadidos sbRoleBadge, notifBadge, ajustesBadge
              y botones de Notificaciones/Ajustes que auth-roles.js,
              notificaciones.js y ajustes.js buscan con getElementById.
              Sin estos elementos recibían null y los badges nunca aparecían. -->
-        <nav id="sidebar" aria-label="Menú principal">
+        
             <div id="sbHead">
                 <span class="sb-logo">BarInventory</span>
                 <button type="button" id="sbCloseBtn" onclick="sbClose()" aria-label="Cerrar menú">
