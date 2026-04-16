@@ -100,23 +100,20 @@ function _scheduleRender() {
 // ═════════════════════════════════════════════════════════════
 //  HELPERS DE CHUNK
 // ═════════════════════════════════════════════════════════════
-async function _readChunkedSubcollection(docRef, subcollName) {
-    if (!docRef) return [];
-    try {
-        const snap = await docRef.collection(subcollName).orderBy('chunkIndex').get();
-        if (snap.empty) return [];
-        const result = [];
-        snap.forEach(d => {
-            if (d.id.startsWith('new_')) return; // ← ignorar transitorios
-            const items = d.data().items;
-            if (Array.isArray(items)) items.forEach(i => result.push(i));
+
+async function _writeChunkedSubcollection(docRef, subcollName, dataArray) {
+    const colRef      = docRef.collection(subcollName);
+    const totalChunks = Math.max(1, Math.ceil(dataArray.length / MAX_CHUNK_SIZE));
+
+    const writeBatch = window._db.batch();
+    for (let i = 0; i < totalChunks; i++) {
+        writeBatch.set(colRef.doc('new_chunk_' + i), {
+            items:       dataArray.slice(i * MAX_CHUNK_SIZE, (i + 1) * MAX_CHUNK_SIZE),
+            chunkIndex:  i,
+            totalChunks: totalChunks,
+            _updatedAt:  Date.now(),
         });
-        return result;
-    } catch (e) {
-        console.warn(`[Firebase][Chunk] Error leyendo ${subcollName}:`, e);
-        return [];
     }
-}
     await writeBatch.commit();
 
     const existingSnap = await colRef.get();
@@ -815,13 +812,6 @@ export async function syncToCloud(retryCount = 0) {
                 _inventoriesInChunks: true,
                 _conteoInSubcol:      true,
             };
-            const payloadFields = state.userRole === 'admin'
-    ? payload
-    : (({ auditoriaStatus, auditoriaConteo, _lastModified, _syncedAt,
-          _ordersInChunks, _inventoriesInChunks, _conteoInSubcol }) =>
-        ({ auditoriaStatus, auditoriaConteo, _lastModified, _syncedAt,
-           _ordersInChunks, _inventoriesInChunks, _conteoInSubcol }))(payload);
-tx.set(docRef, payloadFields, { merge: true });
             tx.set(docRef, payload, { merge: true });
 
             // ── Fusionar stockAreas producto a producto ───────────────────
@@ -871,11 +861,8 @@ tx.set(docRef, payloadFields, { merge: true });
 
         // Historiales chunkeados (append-only, fuera de la transacción es seguro)
         // BUG-FIX: orders NO se suben — solo inventories se sincronizan a la nube
-        try {
-    await _writeChunkedSubcollection(docRef, 'inventoriesChunks', state.inventories);
-} catch (chunkErr) {
-    console.warn('[Firebase] inventoriesChunks write falló (posiblemente permisos):', chunkErr.code);
-}
+        await _writeChunkedSubcollection(docRef, 'inventoriesChunks', state.inventories);
+
         state._cloudSyncPending = false;
         state._lastCloudSync    = Date.now();
         state._syncInProgress   = false;

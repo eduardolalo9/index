@@ -143,11 +143,9 @@ service cloud.firestore {
       allow create: if isAdmin();
 
       // Actualizar: admin = todo, user = todo excepto 'products'
- allow update: if isAdmin()
-              || (isUser()
-                  && !request.resource.data.diff(resource.data)
-                      .affectedKeys()
-                      .hasAny(['products', 'cart', 'activeTab', 'selectedArea']));
+      allow update: if isAdmin()
+                    || (isUser() && !isModifyingField('products'));
+
       // Eliminar: solo admin
       allow delete: if isAdmin();
 
@@ -177,8 +175,9 @@ service cloud.firestore {
 
       // ── SUBCOLECCIÓN: inventoriesChunks — solo admin escribe
       match /inventoriesChunks/{chunk} {
-    allow read:  if isUser();
-    allow write: if isUser();  // ← ambos roles pueden guardar inventario
+        allow read:  if isUser();
+        allow write: if isAdmin();
+      }
     }
 
 
