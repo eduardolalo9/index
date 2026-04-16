@@ -177,9 +177,8 @@ service cloud.firestore {
 
       // ── SUBCOLECCIÓN: inventoriesChunks — solo admin escribe
       match /inventoriesChunks/{chunk} {
-        allow read:  if isUser();
-        allow write: if isAdmin();
-      }
+    allow read:  if isUser();
+    allow write: if isUser();  // ← ambos roles pueden guardar inventario
     }
 
 
