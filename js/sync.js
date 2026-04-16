@@ -812,7 +812,14 @@ export async function syncToCloud(retryCount = 0) {
                 _inventoriesInChunks: true,
                 _conteoInSubcol:      true,
             };
-            tx.set(docRef, payload, { merge: true });
+            const payloadFields = state.userRole === 'admin'
+    ? payload
+    : (({ auditoriaStatus, auditoriaConteo, _lastModified, _syncedAt,
+          _ordersInChunks, _inventoriesInChunks, _conteoInSubcol }) =>
+        ({ auditoriaStatus, auditoriaConteo, _lastModified, _syncedAt,
+           _ordersInChunks, _inventoriesInChunks, _conteoInSubcol }))(payload);
+tx.set(docRef, payloadFields, { merge: true });
+           
 
             // ── Fusionar stockAreas producto a producto ───────────────────
             // Registrar qué áreas se escribieron para actualizar anti-eco fuera
