@@ -30,7 +30,7 @@ window._firebaseReady = false;
 (function initFirebase() {
     'use strict';
 
-const firebaseConfig = {
+const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDugu23uEgacqMUTsoBF8i7xfyDIDbiv0M",
   authDomain: "bar-inventario-1109e.firebaseapp.com",
   databaseURL: "https://bar-inventario-1109e-default-rtdb.firebaseio.com",
