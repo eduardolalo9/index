@@ -367,8 +367,11 @@ export function auditoriaTodasCompletas() {
  * Usa resetConteoAtomicoEnFirestore() — batch + transaction atómicos.
  */
 export function auditoriaResetear() {
-          if (!navigator.onLine) {
-        showNotification('⚠️ Necesitas conexión para resetear la auditoría');
+    // FIX-4: el reset requiere conexión. Sin ella, el estado local se limpia
+    // pero Firestore conserva los conteos de otros dispositivos. Al reconectar,
+    // los onSnapshot reaplican esos datos y el reset queda inconsistente.
+    if (!navigator.onLine) {
+        showNotification('⚠️ Necesitas conexión para iniciar una nueva auditoría');
         return;
     }
     showConfirm(

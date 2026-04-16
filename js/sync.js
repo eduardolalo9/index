@@ -137,6 +137,10 @@ async function _readChunkedSubcollection(docRef, subcollName) {
         if (snap.empty) return [];
         const result = [];
         snap.forEach(d => {
+            // FIX-5: ignorar documentos transitorios 'new_chunk_N' que existen
+            // durante la ventana entre el primer y segundo batch de _writeChunkedSubcollection.
+            // Si se leen en esa ventana, los datos aparecen duplicados.
+            if (d.id.startsWith('new_')) return;
             const items = d.data().items;
             if (Array.isArray(items)) items.forEach(i => result.push(i));
         });
@@ -812,14 +816,24 @@ export async function syncToCloud(retryCount = 0) {
                 _inventoriesInChunks: true,
                 _conteoInSubcol:      true,
             };
-            const payloadFields = state.userRole === 'admin'
-    ? payload
-    : (({ auditoriaStatus, auditoriaConteo, _lastModified, _syncedAt,
-          _ordersInChunks, _inventoriesInChunks, _conteoInSubcol }) =>
-        ({ auditoriaStatus, auditoriaConteo, _lastModified, _syncedAt,
-           _ordersInChunks, _inventoriesInChunks, _conteoInSubcol }))(payload);
-tx.set(docRef, payloadFields, { merge: true });
-           
+            // FIX-1: los usuarios NO deben subir products/cart/activeTab/selectedArea.
+            // Solo el admin sube el catálogo completo. Un user solo sincroniza
+            // sus conteos de auditoría y stockAreas — nunca el catálogo.
+            // Esto evita el edge-case donde un user con products:[] localmente
+            // sobreescriba el catálogo de todos los demás bartenders.
+            const isAdminRole = (state.userRole === 'admin' || state.userRole === null);
+            const payloadToWrite = isAdminRole
+                ? payload
+                : {
+                    auditoriaStatus:      payload.auditoriaStatus,
+                    auditoriaConteo:      payload.auditoriaConteo,
+                    _lastModified:        payload._lastModified,
+                    _syncedAt:            payload._syncedAt,
+                    _ordersInChunks:      payload._ordersInChunks,
+                    _inventoriesInChunks: payload._inventoriesInChunks,
+                    _conteoInSubcol:      payload._conteoInSubcol,
+                  };
+            tx.set(docRef, payloadToWrite, { merge: true });
 
             // ── Fusionar stockAreas producto a producto ───────────────────
             // Registrar qué áreas se escribieron para actualizar anti-eco fuera
@@ -868,11 +882,16 @@ tx.set(docRef, payloadFields, { merge: true });
 
         // Historiales chunkeados (append-only, fuera de la transacción es seguro)
         // BUG-FIX: orders NO se suben — solo inventories se sincronizan a la nube
-       try {
-    await _writeChunkedSubcollection(docRef, 'inventoriesChunks', state.inventories);
-} catch (chunkErr) {
-    console.warn('[Firebase] inventoriesChunks write falló (posiblemente permisos):', chunkErr.code);
-}
+        // FIX-3: wrap en try/catch por si los permisos de Firestore fallan transitoriamente
+        try {
+            await _writeChunkedSubcollection(docRef, 'inventoriesChunks', state.inventories);
+        } catch (chunkErr) {
+            // Fallo no crítico: el inventario ya está en localStorage.
+            // Se reintentará en la próxima syncToCloud.
+            console.warn('[Firebase] inventoriesChunks write falló:', chunkErr.code || chunkErr.message);
+            state._cloudSyncPending = true;
+        }
+
         state._cloudSyncPending = false;
         state._lastCloudSync    = Date.now();
         state._syncInProgress   = false;

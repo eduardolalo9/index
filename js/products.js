@@ -193,16 +193,20 @@ export function calcularTotalMultiUsuario(productId, area) {
   if (!porUsuario || Object.keys(porUsuario).length === 0) {
     return calcularTotalConAbiertas(productId, area);
   }
+  // FIX-2: antes usaba maxEnteras (el conteo más alto entre usuarios),
+  // lo que inflaba el inventario real. Ahora usa el promedio redondeado,
+  // que es el valor consensuado entre todos los bartenders que contaron.
   let sumEnteras = 0, contadoresCount = 0, todasAbiertas = [];
-Object.values(porUsuario).forEach(conteo => {
+  Object.values(porUsuario).forEach(conteo => {
     if (typeof conteo === 'object' && conteo !== null) {
-        const ent = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
-        sumEnteras += ent;
-        contadoresCount++;
-        if (Array.isArray(conteo.abiertas)) todasAbiertas = todasAbiertas.concat(conteo.abiertas);
+      const ent = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
+      sumEnteras += ent;
+      contadoresCount++;
+      if (Array.isArray(conteo.abiertas)) todasAbiertas = todasAbiertas.concat(conteo.abiertas);
     }
-});
-const avgEnteras = contadoresCount > 0 ? Math.round(sumEnteras / contadoresCount) : 0;
+  });
+  // Promedio redondeado al entero más cercano (enteras siempre son unidades completas)
+  const avgEnteras = contadoresCount > 0 ? Math.round(sumEnteras / contadoresCount) : 0;
   if (todasAbiertas.length === 0) return avgEnteras;
   const pesoLlena = product.pesoBotellaLlenaOz || 0;
   const pesoVacia = PESO_BOTELLA_VACIA_OZ || 14.0;
