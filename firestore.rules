@@ -143,9 +143,11 @@ service cloud.firestore {
       allow create: if isAdmin();
 
       // Actualizar: admin = todo, user = todo excepto 'products'
-      allow update: if isAdmin()
-                    || (isUser() && !isModifyingField('products'));
-
+     allow update: if isAdmin()
+              || (isUser()
+                  && !request.resource.data.diff(resource.data)
+                      .affectedKeys()
+                      .hasAny(['products', 'cart', 'activeTab', 'selectedArea']));
       // Eliminar: solo admin
       allow delete: if isAdmin();
 
