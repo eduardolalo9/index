@@ -100,6 +100,7 @@ function _scheduleRender() {
 // ═════════════════════════════════════════════════════════════
 //  HELPERS DE CHUNK
 // ═════════════════════════════════════════════════════════════
+
 async function _writeChunkedSubcollection(docRef, subcollName, dataArray) {
     const colRef      = docRef.collection(subcollName);
     const totalChunks = Math.max(1, Math.ceil(dataArray.length / MAX_CHUNK_SIZE));
