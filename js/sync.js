@@ -100,33 +100,31 @@ function _scheduleRender() {
 // ═════════════════════════════════════════════════════════════
 //  HELPERS DE CHUNK
 // ═════════════════════════════════════════════════════════════
+async function _writeChunkedSubcollection(docRef, subcollName, dataArray) {
+    const colRef      = docRef.collection(subcollName);
+    const totalChunks = Math.max(1, Math.ceil(dataArray.length / MAX_CHUNK_SIZE));
 
-async function _readChunkedSubcollection(docRef, subcollName) {
-    if (!docRef) return [];
-    
-    try {
-        const snap = await docRef.collection(subcollName).orderBy('chunkIndex').get();
-        if (snap.empty) return [];
-        
-        const result = [];
-        
-        snap.forEach(d => {
-            // SOLUCIÓN: Ignoramos los chunks transitorios (ventana no atómica)
-            if (d.id.startsWith('new_')) return; 
-            
-            const items = d.data().items;
-            if (Array.isArray(items)) {
-                items.forEach(i => result.push(i));
-            }
+    const writeBatch = window._db.batch();
+    for (let i = 0; i < totalChunks; i++) {
+        writeBatch.set(colRef.doc('new_chunk_' + i), {
+            items:       dataArray.slice(i * MAX_CHUNK_SIZE, (i + 1) * MAX_CHUNK_SIZE),
+            chunkIndex:  i,
+            totalChunks: totalChunks,
+            _updatedAt:  Date.now(),
         });
-        
-        return result;
-    } catch (e) {
-        console.warn(`[Firebase][Chunk] Error leyendo ${subcollName}:`, e);
-        return [];
     }
-} 
-});
+    await writeBatch.commit();
+
+    const existingSnap = await colRef.get();
+    const cleanBatch   = window._db.batch();
+    existingSnap.forEach(d => {
+        if (d.id.startsWith('new_')) {
+            cleanBatch.set(colRef.doc(d.id.replace('new_', '')), d.data());
+            cleanBatch.delete(d.ref);
+        } else {
+            cleanBatch.delete(d.ref);
+        }
+    });
     if (!existingSnap.empty) await cleanBatch.commit();
     console.info(`[Firebase][Chunk] ${subcollName} → ${totalChunks} chunk(s) escritos.`);
 }
