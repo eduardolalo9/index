@@ -367,6 +367,10 @@ export function auditoriaTodasCompletas() {
  * Usa resetConteoAtomicoEnFirestore() — batch + transaction atómicos.
  */
 export function auditoriaResetear() {
+          if (!navigator.onLine) {
+        showNotification('⚠️ Necesitas conexión para resetear la auditoría');
+        return;
+    }
     showConfirm(
         '⚠️ ¿Iniciar nueva auditoría?\n\nSe borrarán todos los conteos actuales de las tres áreas.',
         async () => {
