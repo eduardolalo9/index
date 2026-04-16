@@ -193,18 +193,20 @@ export function calcularTotalMultiUsuario(productId, area) {
   if (!porUsuario || Object.keys(porUsuario).length === 0) {
     return calcularTotalConAbiertas(productId, area);
   }
-  let maxEnteras = 0, todasAbiertas = [];
-  Object.values(porUsuario).forEach(conteo => {
+  let sumEnteras = 0, contadoresCount = 0, todasAbiertas = [];
+Object.values(porUsuario).forEach(conteo => {
     if (typeof conteo === 'object' && conteo !== null) {
-      const ent = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
-      if (ent > maxEnteras) maxEnteras = ent;
-      if (Array.isArray(conteo.abiertas)) todasAbiertas = todasAbiertas.concat(conteo.abiertas);
+        const ent = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
+        sumEnteras += ent;
+        contadoresCount++;
+        if (Array.isArray(conteo.abiertas)) todasAbiertas = todasAbiertas.concat(conteo.abiertas);
     }
-  });
-  if (todasAbiertas.length === 0) return maxEnteras;
+});
+const avgEnteras = contadoresCount > 0 ? Math.round(sumEnteras / contadoresCount) : 0;
+  if (todasAbiertas.length === 0) return avgEnteras;
   const pesoLlena = product.pesoBotellaLlenaOz || 0;
   const pesoVacia = PESO_BOTELLA_VACIA_OZ || 14.0;
-  if (pesoLlena <= pesoVacia) return maxEnteras + (todasAbiertas.length * 0.5);
+  if (pesoLlena <= pesoVacia) return avgEnteras + (todasAbiertas.length * 0.5);
   const contenidoLlena = pesoLlena - pesoVacia;
   let totalAbiertas = 0;
   todasAbiertas.forEach(pesoActual => {
@@ -213,7 +215,7 @@ export function calcularTotalMultiUsuario(productId, area) {
     else if (peso >= pesoLlena) totalAbiertas += 1;
     else    totalAbiertas += (peso - pesoVacia) / contenidoLlena;
   });
-  return parseFloat((maxEnteras + totalAbiertas).toFixed(4));
+  return parseFloat((avgEnteras + totalAbiertas).toFixed(4));
 }
 
 // ═════════════════════════════════════════════════════════════
