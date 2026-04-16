@@ -142,12 +142,16 @@ service cloud.firestore {
       // Crear: solo admin
       allow create: if isAdmin();
 
-      // Actualizar: admin = todo, user = todo excepto 'products'
-     allow update: if isAdmin()
-              || (isUser()
-                  && !request.resource.data.diff(resource.data)
-                      .affectedKeys()
-                      .hasAny(['products', 'cart', 'activeTab', 'selectedArea']));
+      // Actualizar: admin = todo.
+      // user = solo campos de conteo/auditoría — NO puede tocar el catálogo,
+      // el carrito ni la tab activa (FIX-1: evita que un payload de user
+      // con products:[] sobreescriba el catálogo en edge-cases de bug).
+      allow update: if isAdmin()
+                    || (isUser()
+                        && !request.resource.data.diff(resource.data)
+                            .affectedKeys()
+                            .hasAny(['products', 'cart', 'activeTab', 'selectedArea']));
+
       // Eliminar: solo admin
       allow delete: if isAdmin();
 
@@ -174,11 +178,14 @@ service cloud.firestore {
         allow read:  if isUser();
         allow write: if isAdmin();
       }
-      // ── SUBCOLECCIÓN: inventoriesChunks — solo admin escribe
+
+      // ── SUBCOLECCIÓN: inventoriesChunks — ambos roles guardan inventario
+      // FIX-3: user debe poder subir a la nube su inventario guardado,
+      // de lo contrario solo queda en localStorage y se pierde al cerrar.
       match /inventoriesChunks/{chunk} {
-    allow read:  if isUser();
-    allow write: if isUser();  // ← ambos roles pueden guardar inventario
-}
+        allow read:  if isUser();
+        allow write: if isUser();
+      }
     }
 
 
