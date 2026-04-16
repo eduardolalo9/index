@@ -868,8 +868,11 @@ tx.set(docRef, payloadFields, { merge: true });
 
         // Historiales chunkeados (append-only, fuera de la transacción es seguro)
         // BUG-FIX: orders NO se suben — solo inventories se sincronizan a la nube
-        await _writeChunkedSubcollection(docRef, 'inventoriesChunks', state.inventories);
-
+        try {
+    await _writeChunkedSubcollection(docRef, 'inventoriesChunks', state.inventories);
+} catch (chunkErr) {
+    console.warn('[Firebase] inventoriesChunks write falló (posiblemente permisos):', chunkErr.code);
+}
         state._cloudSyncPending = false;
         state._lastCloudSync    = Date.now();
         state._syncInProgress   = false;
