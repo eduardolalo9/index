@@ -1,10 +1,10 @@
 /**
- * js/app.js — v2.2
+ * js/app.js — v2.3
  *
- * CAMBIOS v2.2:
- *   • Importa sync-patch.js e inicia initUserLocksListener()
- *     después de que auth resuelve, para mantener sincronizados
- *     los bloqueos de conteo por usuario desde Firestore.
+ * CAMBIOS v2.3:
+ *   • Eliminado import de './sync-patch.js' — initUserLocksListener
+ *     ahora está integrado directamente en sync.js v3.0.
+ *   • La llamada a initUserLocksListener() se importa de sync.js.
  */
 
 import { initTheme } from './ui.js';
@@ -16,8 +16,8 @@ import { initAuditUser }              from './audit.js';
 import { initAuth, onAuthReady }      from './auth.js';
 import { switchTab }                  from './render.js';
 import { updateNetworkStatus, syncToCloud,
-         stopRealtimeListeners }       from './sync.js';
-import { initUserLocksListener }      from './sync-patch.js';
+         stopRealtimeListeners,
+         initUserLocksListener }       from './sync.js';
 import { state }                      from './state.js';
 import { INITIAL_PRODUCTS,
          AUTO_SAVE_INTERVAL_MS,
@@ -27,7 +27,7 @@ import './ajustes.js';
 import './reportes.js';
 import './actions.js';
 
-console.info('[App] BarInventory v2.2 arrancando…');
+console.info('[App] BarInventory v2.3 arrancando…');
 
 // ── Service Worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
@@ -39,7 +39,6 @@ if ('serviceWorker' in navigator) {
           const nw = reg.installing;
           nw.addEventListener('statechange', () => {
             if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-              console.info('[SW] Nueva versión disponible.');
               window.showNotification?.('🔄 Nueva versión disponible — recarga la página');
             }
           });
@@ -112,8 +111,8 @@ window.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('change', function(e) {
       const target = e.target;
       if (!target || target.tagName !== 'INPUT') return;
-      if (target.id === 'fileInput')      { handleFileImport(e); return; }
-      if (target.id === 'importDataInput') { importFullData(e); return; }
+      if (target.id === 'fileInput')       { handleFileImport(e); return; }
+      if (target.id === 'importDataInput') { importFullData(e);   return; }
     });
 
     // Red online/offline
@@ -127,11 +126,11 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // Iniciar listener de bloqueos de usuario (sync-patch)
-    // Espera 1.5s para que startRealtimeListeners() haya terminado
+    // Iniciar listener de bloqueos de usuario
+    // Espera 2s para que startRealtimeListeners() haya terminado
     setTimeout(() => {
       initUserLocksListener();
-    }, 1500);
+    }, 2000);
 
     // Auto-guardado cada 30s
     setInterval(smartAutoSave, AUTO_SAVE_INTERVAL_MS);
@@ -140,7 +139,6 @@ window.addEventListener('DOMContentLoaded', () => {
     setInterval(() => {
       if (navigator.onLine && window._db &&
           state._cloudSyncPending && !state._syncInProgress) {
-        console.info('[App] Sync de recuperación…');
         syncToCloud().catch(e => console.warn('[App] Sync periódico falló:', e));
       }
     }, SYNC_RECOVERY_INTERVAL_MS);
