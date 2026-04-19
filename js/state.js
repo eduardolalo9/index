@@ -1,19 +1,18 @@
 /**
- * js/state.js — v2.4 DEFINITIVO
+ * js/state.js — v2.5
  * ══════════════════════════════════════════════════════════════
  * Estado global centralizado de la aplicación.
- * TODAS las propiedades que cualquier módulo lee/escribe deben
- * estar declaradas aquí — sin excepción.
  *
- * FIX BUG-7:
- *   isAuditoriaMode — audit.js lo escribe en 4 funciones:
- *     auditoriaEntrarArea()      → true
- *     auditoriaFinalizarConteo() → false
- *     auditoriaVolverSeleccion() → false
- *     auditoriaResetear()        → false
- *   Sin declarar aquí, loadFromLocalStorage no puede restaurarlo
- *   entre sesiones. Si el bartender recarga durante un conteo
- *   activo, el modo auditoría queda en false y el conteo se pierde.
+ * CAMBIOS v2.5:
+ *   • auditoriaStatusPorUsuario — mapa { [userId]: { almacen, barra1, barra2 } }
+ *     donde cada valor es 'pendiente' | 'completada'.
+ *     Permite que cada bartender tenga su propio estado de bloqueo
+ *     por área, independientemente del estado global de la zona.
+ *     El admin puede reabrir el conteo de cualquier usuario.
+ *
+ *   • auditUserRegistry — mapa { [userId]: { userName, lastSeen } }
+ *     Registro de todos los usuarios que han participado en la auditoría
+ *     activa. Usado por el panel de administración en la vista de inventario.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -43,6 +42,7 @@ export const state = {
   // { [productId]: { [area]: { enteras: n, abiertas: [oz, ...] } } }
   auditoriaConteo: {},
 
+  // Estado GLOBAL de zona (al menos un usuario completó)
   auditoriaStatus: {
     almacen: 'pendiente',
     barra1:  'pendiente',
@@ -55,18 +55,30 @@ export const state = {
   // Sub-vista: 'selection' | 'counting'
   auditoriaView: 'selection',
 
-  // FIX BUG-7: flag de modo auditoría activo.
-  // audit.js lo escribe en 4 funciones. Sin declarar aquí,
-  // loadFromLocalStorage no puede restaurarlo al recargar,
-  // y el conteo activo se pierde.
+  // Flag de modo auditoría activo.
   isAuditoriaMode: false,
 
   // ─── Multi-usuario ────────────────────────────────────────────
-  // { [productId]: { [area]: { [userId]: { enteras, abiertas, ts } } } }
+  // { [productId]: { [area]: { [userId]: { enteras, abiertas, ts, userName } } } }
   auditoriaConteoPorUsuario: {},
 
   // { userId, userName, role }
   auditCurrentUser: null,
+
+  // ─── NUEVO v2.5: Estado de bloqueo POR USUARIO ───────────────
+  // { [userId]: { almacen: 'pendiente'|'completada',
+  //               barra1:  'pendiente'|'completada',
+  //               barra2:  'pendiente'|'completada' } }
+  // • Un bartender no puede modificar un área que él mismo finalizó.
+  // • El admin puede resetear cualquier valor a 'pendiente'.
+  // • Se sincroniza a Firestore en conteoPorUsuario/_statusUsuarios
+  auditoriaStatusPorUsuario: {},
+
+  // ─── NUEVO v2.5: Registro de participantes en la auditoría ───
+  // { [userId]: { userName: string, lastSeen: number } }
+  // • Permite al admin ver qué dispositivos han contado.
+  // • Se actualiza cada vez que un usuario entra a contar.
+  auditUserRegistry: {},
 
   // ─── Sesión Firebase ─────────────────────────────────────────
   currentUser:  null,   // firebase.User | null
@@ -83,21 +95,16 @@ export const state = {
   _lastDataHash:      '',
 
   // ─── Ajustes pendientes offline ──────────────────────────────
-  // Cola de ajustes solicitados sin conexión — se suben al reconectar.
   adjustmentsPending: [],
 
   // ─── Notificaciones ──────────────────────────────────────────
-  // NOTA: nombre en inglés — notificaciones.js usa state.notifications
   notifications:       [],
   notificationsUnread: 0,
 
   // ─── Ajustes del admin ───────────────────────────────────────
   ajustesPendientes: [],
-
-  // Configuración sincronizada
   ajustes: {},
 
   // ─── Reportes ────────────────────────────────────────────────
   reportesPublicados: [],
 };
-
