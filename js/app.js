@@ -1,14 +1,10 @@
 /**
- * js/app.js — v2.1 CORREGIDO
+ * js/app.js — v2.2
  *
- * FIX BUG-5: Service Worker con ruta absoluta '/sw.js' y scope '/'
- *   falla en GitHub Pages porque el site vive en /index/, no en la
- *   raíz del dominio. El navegador rechaza el registro silenciosamente.
- *   Sin SW: sin instalación PWA, sin caché offline.
- *   En una barra sin WiFi estable esto inutiliza la app.
- *
- *   CORRECCIÓN: Rutas relativas './sw.js' con scope './'
- *   funcionan en cualquier subdirectorio de GitHub Pages.
+ * CAMBIOS v2.2:
+ *   • Importa sync-patch.js e inicia initUserLocksListener()
+ *     después de que auth resuelve, para mantener sincronizados
+ *     los bloqueos de conteo por usuario desde Firestore.
  */
 
 import { initTheme } from './ui.js';
@@ -21,6 +17,7 @@ import { initAuth, onAuthReady }      from './auth.js';
 import { switchTab }                  from './render.js';
 import { updateNetworkStatus, syncToCloud,
          stopRealtimeListeners }       from './sync.js';
+import { initUserLocksListener }      from './sync-patch.js';
 import { state }                      from './state.js';
 import { INITIAL_PRODUCTS,
          AUTO_SAVE_INTERVAL_MS,
@@ -30,13 +27,11 @@ import './ajustes.js';
 import './reportes.js';
 import './actions.js';
 
-console.info('[App] BarInventory arrancando…');
+console.info('[App] BarInventory v2.2 arrancando…');
 
 // ── Service Worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    // FIX BUG-5: './sw.js' relativo funciona en /index/ de GitHub Pages.
-    // La ruta absoluta '/sw.js' buscaba el archivo en la raíz del dominio.
     navigator.serviceWorker.register('./sw.js', { scope: './' })
       .then(reg => {
         console.info('[SW] Registrado — scope:', reg.scope);
@@ -62,7 +57,7 @@ if ('serviceWorker' in navigator) {
   console.info('[SW] Service Workers no soportados.');
 }
 
-// ── ESC cierra sidebar (sin interferir con modales abiertos) ──
+// ── ESC cierra sidebar ────────────────────────────────────────
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   const anyOpen = ['productModal', 'orderModal', 'inventarioModal']
@@ -84,7 +79,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
   initTheme();
 
-  // Enter en campos del login
   document.getElementById('loginEmail')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); document.getElementById('loginPassword')?.focus(); }
   });
@@ -92,13 +86,8 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') { e.preventDefault(); window.handleLogin?.(); }
   });
 
-  // Iniciar autenticación
   initAuth();
 
-  // Esperar a que auth resuelva
-  // NOTA: onAuthReady es un live-binding al _authReady de auth.js.
-  // Gracias al FIX BUG-1, en el primer login se resuelve sobre
-  // la Promise original (P1) que este .then() registró primero.
   onAuthReady.then(user => {
     if (!user) {
       console.info('[App] Sin usuario — esperando login.');
@@ -123,12 +112,12 @@ window.addEventListener('DOMContentLoaded', () => {
     document.body.addEventListener('change', function(e) {
       const target = e.target;
       if (!target || target.tagName !== 'INPUT') return;
-      if (target.id === 'fileInput') { handleFileImport(e); return; }
+      if (target.id === 'fileInput')      { handleFileImport(e); return; }
       if (target.id === 'importDataInput') { importFullData(e); return; }
     });
 
     // Red online/offline
-    window.addEventListener('online', updateNetworkStatus);
+    window.addEventListener('online',  updateNetworkStatus);
     window.addEventListener('offline', updateNetworkStatus);
     updateNetworkStatus();
 
@@ -137,6 +126,12 @@ window.addEventListener('DOMContentLoaded', () => {
         import('./ajustes.js').then(m => m.subirAjustesPendientes()).catch(() => {});
       }
     });
+
+    // Iniciar listener de bloqueos de usuario (sync-patch)
+    // Espera 1.5s para que startRealtimeListeners() haya terminado
+    setTimeout(() => {
+      initUserLocksListener();
+    }, 1500);
 
     // Auto-guardado cada 30s
     setInterval(smartAutoSave, AUTO_SAVE_INTERVAL_MS);
@@ -174,4 +169,3 @@ window.addEventListener('DOMContentLoaded', () => {
     console.info('[App] ✓ Arranque completo.');
   });
 });
-
