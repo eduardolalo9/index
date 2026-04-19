@@ -1,26 +1,11 @@
 /**
- * js/storage.js — v2.3 CORREGIDO
+ * js/storage.js — v2.4
  * ══════════════════════════════════════════════════════════════
  * Persistencia local con localStorage (offline-first).
  *
- * FIX BUG-9:
- *   saveToLocalStorage no incluía 3 campos críticos:
- *
- *   • auditoriaView — si el bartender recargaba durante un conteo,
- *     auditoriaView volvía a 'selection' y la pantalla de conteo
- *     desaparecía aunque el conteo estuviera activo.
- *
- *   • adjustmentsPending — cola offline de ajustes de stock
- *     solicitados por usuarios sin conexión. Al recargar, la cola
- *     se vaciaba y los ajustes nunca llegaban al admin.
- *
- *   • ajustesPendientes — lista de ajustes pendientes del admin.
- *     Se reconstruye desde Firestore vía listener, pero guardarla
- *     evita el parpadeo de "sin ajustes" durante la reconexión.
- *
- * Correcciones anteriores (v2.2):
- *   • smartAutoSave() — solo guarda si el estado cambió (hash)
- *   • searchTerm — se perdía en cada recarga
+ * CAMBIOS v2.4:
+ *   • Persiste auditoriaStatusPorUsuario — bloqueo por usuario/área.
+ *   • Persiste auditUserRegistry — registro de participantes.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -31,28 +16,29 @@ const STORAGE_KEY = 'inventarioApp_data';
 export function saveToLocalStorage() {
   try {
     const dataToSave = {
-      products:                  state.products,
-      cart:                      state.cart,
-      orders:                    state.orders,
-      inventories:               state.inventories,
-      activeTab:                 state.activeTab,
-      selectedArea:              state.selectedArea,
-      selectedGroup:             state.selectedGroup,
-      searchTerm:                state.searchTerm,
-      inventarioConteo:          state.inventarioConteo,
-      auditoriaConteo:           state.auditoriaConteo,
-      auditoriaStatus:           state.auditoriaStatus,
-      auditoriaConteoPorUsuario: state.auditoriaConteoPorUsuario,
-      // FIX BUG-9: campos que faltaban
-      auditoriaView:             state.auditoriaView,
-      auditoriaAreaActiva:       state.auditoriaAreaActiva,
-      isAuditoriaMode:           state.isAuditoriaMode,
-      adjustmentsPending:        state.adjustmentsPending,
-      ajustesPendientes:         state.ajustesPendientes,
-      // fin fix
-      ajustes:                   state.ajustes,
-      syncEnabled:               state.syncEnabled,
-      _lastModified:             Date.now(),
+      products:                    state.products,
+      cart:                        state.cart,
+      orders:                      state.orders,
+      inventories:                 state.inventories,
+      activeTab:                   state.activeTab,
+      selectedArea:                state.selectedArea,
+      selectedGroup:               state.selectedGroup,
+      searchTerm:                  state.searchTerm,
+      inventarioConteo:            state.inventarioConteo,
+      auditoriaConteo:             state.auditoriaConteo,
+      auditoriaStatus:             state.auditoriaStatus,
+      auditoriaConteoPorUsuario:   state.auditoriaConteoPorUsuario,
+      auditoriaView:               state.auditoriaView,
+      auditoriaAreaActiva:         state.auditoriaAreaActiva,
+      isAuditoriaMode:             state.isAuditoriaMode,
+      adjustmentsPending:          state.adjustmentsPending,
+      ajustesPendientes:           state.ajustesPendientes,
+      ajustes:                     state.ajustes,
+      syncEnabled:                 state.syncEnabled,
+      // v2.4 — nuevos campos
+      auditoriaStatusPorUsuario:   state.auditoriaStatusPorUsuario,
+      auditUserRegistry:           state.auditUserRegistry,
+      _lastModified:               Date.now(),
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
@@ -79,28 +65,28 @@ export function loadFromLocalStorage() {
 
     const data = JSON.parse(raw);
 
-    if (Array.isArray(data.products))          state.products                  = data.products;
-    if (Array.isArray(data.cart))              state.cart                      = data.cart;
-    if (Array.isArray(data.orders))            state.orders                    = data.orders;
-    if (Array.isArray(data.inventories))       state.inventories               = data.inventories;
-    if (data.activeTab)                        state.activeTab                 = data.activeTab;
-    if (data.selectedArea)                     state.selectedArea              = data.selectedArea;
-    if (data.selectedGroup)                    state.selectedGroup             = data.selectedGroup;
-    if (data.searchTerm !== undefined)         state.searchTerm                = data.searchTerm;
-    if (data.inventarioConteo)                 state.inventarioConteo          = data.inventarioConteo;
-    if (data.auditoriaConteo)                  state.auditoriaConteo           = data.auditoriaConteo;
-    if (data.auditoriaStatus)                  state.auditoriaStatus           = data.auditoriaStatus;
-    if (data.auditoriaConteoPorUsuario)        state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
-    if (data.ajustes)                          state.ajustes                   = data.ajustes;
-    if (data.syncEnabled !== undefined)        state.syncEnabled               = data.syncEnabled;
-
-    // FIX BUG-9: restaurar campos que antes no se guardaban
-    if (data.auditoriaView)                    state.auditoriaView             = data.auditoriaView;
-    if (data.auditoriaAreaActiva !== undefined) state.auditoriaAreaActiva      = data.auditoriaAreaActiva;
-    if (data.isAuditoriaMode !== undefined)    state.isAuditoriaMode           = data.isAuditoriaMode;
-    if (Array.isArray(data.adjustmentsPending)) state.adjustmentsPending       = data.adjustmentsPending;
-    if (Array.isArray(data.ajustesPendientes))  state.ajustesPendientes        = data.ajustesPendientes;
-    // fin fix
+    if (Array.isArray(data.products))              state.products                    = data.products;
+    if (Array.isArray(data.cart))                  state.cart                        = data.cart;
+    if (Array.isArray(data.orders))                state.orders                      = data.orders;
+    if (Array.isArray(data.inventories))           state.inventories                 = data.inventories;
+    if (data.activeTab)                            state.activeTab                   = data.activeTab;
+    if (data.selectedArea)                         state.selectedArea                = data.selectedArea;
+    if (data.selectedGroup)                        state.selectedGroup               = data.selectedGroup;
+    if (data.searchTerm !== undefined)             state.searchTerm                  = data.searchTerm;
+    if (data.inventarioConteo)                     state.inventarioConteo            = data.inventarioConteo;
+    if (data.auditoriaConteo)                      state.auditoriaConteo             = data.auditoriaConteo;
+    if (data.auditoriaStatus)                      state.auditoriaStatus             = data.auditoriaStatus;
+    if (data.auditoriaConteoPorUsuario)            state.auditoriaConteoPorUsuario   = data.auditoriaConteoPorUsuario;
+    if (data.ajustes)                              state.ajustes                     = data.ajustes;
+    if (data.syncEnabled !== undefined)            state.syncEnabled                 = data.syncEnabled;
+    if (data.auditoriaView)                        state.auditoriaView               = data.auditoriaView;
+    if (data.auditoriaAreaActiva !== undefined)    state.auditoriaAreaActiva         = data.auditoriaAreaActiva;
+    if (data.isAuditoriaMode !== undefined)        state.isAuditoriaMode             = data.isAuditoriaMode;
+    if (Array.isArray(data.adjustmentsPending))    state.adjustmentsPending          = data.adjustmentsPending;
+    if (Array.isArray(data.ajustesPendientes))     state.ajustesPendientes           = data.ajustesPendientes;
+    // v2.4
+    if (data.auditoriaStatusPorUsuario)            state.auditoriaStatusPorUsuario   = data.auditoriaStatusPorUsuario;
+    if (data.auditUserRegistry)                    state.auditUserRegistry           = data.auditUserRegistry;
 
     // Toggle de sync desde clave independiente (prioridad)
     try {
@@ -133,7 +119,6 @@ export function smartAutoSave() {
       console.debug('[Storage] smartAutoSave — sin cambios.');
       return;
     }
-
     saveToLocalStorage();
     console.info('[Storage] smartAutoSave — guardado.');
   } catch (e) {
