@@ -1,37 +1,48 @@
 /**
- * js/audit.js — v1.2 (CORREGIDO)
+ * js/audit.js — v2.0 COMPLETO
  * ══════════════════════════════════════════════════════════════
- * Auditoría Física Ciega: identidad multiusuario, estadísticas
- * de conteo, render de paneles y flujo de navegación.
+ * Auditoría Física Ciega — Conteo Multiusuario con Bloqueo por Usuario
  *
- * CORRECCIÓN v1.2:
+ * NUEVO v2.0:
  * ──────────────────────────────────────────────────────────────
- * BUG: AREA_KEYS se usaba en auditoriaFinalizarConteo() pero
- *   NO estaba importada desde './constants.js'.
- *   → ReferenceError: AREA_KEYS is not defined
- *   → Error al intentar finalizar el conteo de cualquier área.
+ * ① Mecanismo de bloqueo por usuario (conteoFinalizadoPorUsuario):
+ *    - auditoriaEntrarArea()     verifica si el usuario ya finalizó.
+ *    - auditoriaFinalizarConteo() copia conteo a auditoriaConteoPorUsuario
+ *      y marca al usuario como finalizado en esa área.
+ *    - reabrirConteoUsuario()    admin desbloquea un usuario específico.
  *
- *   CORRECCIÓN: Añadida AREA_KEYS al import de './constants.js'.
+ * ② renderAuditUserPanel (admin):
+ *    Muestra estado por usuario (✓ Finalizado / ⏳ En curso) con
+ *    botón 🔓 Reabrir por área. Antes mostraba solo la identidad del
+ *    dispositivo local.
  *
- * CAMBIOS RESPECTO A LA VERSIÓN ANTERIOR:
+ * ③ renderAuditComparePanel:
+ *    Muestra resumen de discrepancias por área + botón "Publicar
+ *    reporte final" (solo admin, solo cuando todas las áreas están
+ *    completadas por al menos un usuario).
  *
- *   auditoriaFinalizarConteo() [actualizada]
- *     Antes: actualizaba auditoriaStatus localmente y lo subía
- *            a través de saveToLocalStorage → syncToCloud.
- *     Ahora: llama a txCloseZone(area) de sync.js, que usa
- *            runTransaction con dot-notation para escribir SOLO
- *            el campo de esta zona sin tocar las demás.
- *            Idempotente: si otro dispositivo ya cerró esta zona,
- *            lo detecta y no sobreescribe.
+ * ④ auditoriaResetear():
+ *    Envía notificación broadcast a todos los usuarios para
+ *    informarles que el admin inició un nuevo ciclo.
  *
- *   auditoriaResetear() [actualizada]
- *     Usa resetConteoAtomicoEnFirestore() (batch + transaction).
+ * ⑤ renderAuditUserPanel (usuario):
+ *    Muestra su propio estado (bloqueado / libre) y su nombre.
+ *    Sin cambios en la funcionalidad de renombrar.
+ *
+ * FLUJO COMPLETO:
+ *   Admin → auditoriaResetear()     → ciclo nuevo, notifica a todos
+ *   User  → auditoriaEntrarArea()   → verifica lock
+ *   User  → [cuenta productos]
+ *   User  → auditoriaFinalizarConteo() → bloquea su conteo
+ *   Admin → reabrirConteoUsuario()  → desbloquea a usuario específico
+ *   Admin → openPublicarReporteModal() → publica reporte final
  * ══════════════════════════════════════════════════════════════
  */
 
 import { state }                    from './state.js';
 import { AREAS_AUDITORIA,
-         AREA_KEYS,                       // FIX v1.2: faltaba este import
+         AREAS_AUDITORIA_FA,
+         AREA_KEYS,
          AUDIT_TOLERANCE }          from './constants.js';
 import { showNotification, showConfirm, escapeHtml } from './ui.js';
 import { saveToLocalStorage }       from './storage.js';
@@ -99,6 +110,21 @@ export function auditSaveName() {
     if (inp) setAuditUserName(inp.value);
 }
 
+// ─── Helper: obtener userId y userName del usuario actual ─────
+
+function _getCurrentUserId() {
+    return state.currentUser?.uid
+        || state.auditCurrentUser?.userId
+        || 'anon';
+}
+
+function _getCurrentUserName() {
+    return state.currentUser?.displayName
+        || state.currentUser?.email?.split('@')[0]
+        || state.auditCurrentUser?.userName
+        || 'Bartender';
+}
+
 // ═════════════════════════════════════════════════════════════
 //  ESTADÍSTICAS DE MULTI-CONTEO
 // ═════════════════════════════════════════════════════════════
@@ -146,13 +172,13 @@ function formatAuditTs(ts) {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  RENDER: TRAIL DE TRAZABILIDAD
+//  RENDER: TRAIL DE TRAZABILIDAD (por producto)
 // ═════════════════════════════════════════════════════════════
 
 export function renderAuditTrailForProduct(productId, area) {
     const stats = calcAuditStats(productId, area);
     if (!stats || stats.count === 0) return '';
-    const myId  = state.auditCurrentUser?.userId;
+    const myId  = _getCurrentUserId();
 
     let html = '<div class="audit-trail">';
     html += '<div class="audit-trail-header">';
@@ -193,61 +219,197 @@ export function renderAuditTrailForProduct(productId, area) {
 }
 
 // ═════════════════════════════════════════════════════════════
-//  RENDER: PANEL DE IDENTIDAD
+//  RENDER: PANEL DE IDENTIDAD / ESTADO DE USUARIOS
 // ═════════════════════════════════════════════════════════════
 
+/**
+ * Renderiza el panel de usuarios.
+ * - Admin: tabla de todos los usuarios con estado por área y botón Reabrir.
+ * - Usuario: muestra su nombre, estado de bloqueo y opción de renombrar.
+ */
 export function renderAuditUserPanel() {
+    const isAdmin = state.userRole === 'admin';
+
+    if (isAdmin) {
+        return _renderAdminUserPanel();
+    } else {
+        return _renderUserSelfPanel();
+    }
+}
+
+function _renderUserSelfPanel() {
     const user     = state.auditCurrentUser || { userName: '—', userId: '?' };
     const initials = user.userName.slice(0, 2).toUpperCase();
     let html = '';
 
     html += '<div id="auditRenameInline" class="audit-rename-inline">';
-    html += '<p style="font-size:0.68rem;color:var(--txt-muted);margin-bottom:0;">Nuevo nombre de usuario (máx. 32 caracteres)</p>';
+    html += '<p style="font-size:0.68rem;color:var(--txt-muted);margin-bottom:0;">Nuevo nombre (máx. 32 caracteres)</p>';
     html += '<div class="audit-rename-row">';
     html += '<input id="auditRenameInput" class="audit-rename-input" type="text" maxlength="32" placeholder="Tu nombre…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.auditSaveName();}">';
     html += '<button onclick="window.auditSaveName()" style="padding:6px 12px;background:var(--accent);color:#fff;border-radius:var(--r-sm);font-size:.75rem;font-weight:600;cursor:pointer;min-height:auto;">Guardar</button>';
     html += '<button onclick="window.toggleAuditRename()" style="padding:6px 10px;background:var(--surface);border:1px solid var(--border-mid);border-radius:var(--r-sm);color:var(--txt-secondary);font-size:.75rem;cursor:pointer;min-height:auto;">Cancelar</button>';
     html += '</div></div>';
 
+    // Mostrar estado de bloqueo por área
+    const userId = _getCurrentUserId();
+    const lockStatus = state.conteoFinalizadoPorUsuario || {};
+
     html += '<div class="audit-user-panel">';
     html += `<div class="audit-user-avatar">${escapeHtml(initials)}</div>`;
-    html += '<div class="audit-user-info">';
+    html += '<div class="audit-user-info" style="flex:1;">';
     html += '<div class="audit-user-label">Dispositivo actual</div>';
     html += `<div class="audit-user-name-text">${escapeHtml(user.userName)}</div>`;
     html += `<div class="audit-user-id-text">${escapeHtml(user.userId.slice(0, 22))}…</div>`;
+
+    // Estado por área para este usuario
+    html += '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px;">';
+    AREA_KEYS.forEach(area => {
+        const st = lockStatus[area]?.[userId];
+        const finalizado = st?.finalizado;
+        const label = AREAS_AUDITORIA[area];
+        if (finalizado) {
+            html += `<span style="font-size:0.60rem;font-weight:700;padding:2px 7px;border-radius:100px;background:var(--green-dim);color:var(--green-text);border:1px solid rgba(34,197,94,.20);">✓ ${label}</span>`;
+        }
+    });
     html += '</div>';
-    html += '<button class="audit-rename-btn" onclick="window.toggleAuditRename()"><i class="fa-solid fa-pen" style="font-size:.65rem;margin-right:4px;"></i>Cambiar nombre</button>';
+
+    html += '</div>';
+    html += '<button class="audit-rename-btn" onclick="window.toggleAuditRename()"><i class="fa-solid fa-pen" style="font-size:.65rem;margin-right:4px;"></i>Renombrar</button>';
     html += '</div>';
 
     return html;
 }
 
-// ═════════════════════════════════════════════════════════════
-//  RENDER: PANEL DE COMPARACIÓN MULTIUSUARIO
-// ═════════════════════════════════════════════════════════════
+function _renderAdminUserPanel() {
+    const finalizados = state.conteoFinalizadoPorUsuario || { almacen: {}, barra1: {}, barra2: {} };
 
-export function renderAuditComparePanel() {
-    const hasAny = state.products.some(p =>
-        Object.keys(state.auditoriaConteoPorUsuario[p.id] || {}).some(area =>
-            Object.keys((state.auditoriaConteoPorUsuario[p.id] || {})[area] || {}).length > 1
-        )
-    );
-    if (!hasAny) return '';
-
-    let conflictos = 0;
-    state.products.forEach(p => {
-        Object.keys(AREAS_AUDITORIA).forEach(area => {
-            const stats = calcAuditStats(p.id, area);
-            if (stats?.count >= 2 && stats.hasConflict) conflictos++;
+    // Recopilar todos los usuarios que han participado
+    const allUsers = new Map();
+    AREA_KEYS.forEach(area => {
+        // De conteoFinalizadoPorUsuario
+        Object.entries(finalizados[area] || {}).forEach(([uid, data]) => {
+            if (!allUsers.has(uid)) allUsers.set(uid, data.userName || uid.slice(0, 12));
+        });
+        // De auditoriaConteoPorUsuario
+        state.products.forEach(p => {
+            const porArea = state.auditoriaConteoPorUsuario[p.id]?.[area] || {};
+            Object.entries(porArea).forEach(([uid, conteo]) => {
+                if (!allUsers.has(uid)) allUsers.set(uid, conteo.userName || uid.slice(0, 12));
+            });
         });
     });
 
-    let html = '<div class="bg-white rounded-xl p-4 mb-4 shadow-md" style="border:1px solid var(--border-mid);">';
-    html += '<p style="font-size:0.72rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);margin-bottom:10px;">📊 Comparación multiusuario</p>';
-    html += conflictos > 0
-        ? `<p style="color:var(--red-text);font-size:0.75rem;font-weight:600;">⚠️ ${conflictos} diferencia${conflictos !== 1 ? 's' : ''} detectada${conflictos !== 1 ? 's' : ''}</p>`
-        : '<p style="color:var(--green-text);font-size:0.75rem;font-weight:600;">✓ Sin conflictos detectados</p>';
+    if (allUsers.size === 0) {
+        return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 14px;margin-bottom:12px;">
+            <p style="font-size:0.72rem;color:var(--txt-muted);">Esperando que los bartenders inicien su conteo…</p>
+        </div>`;
+    }
+
+    let html = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 14px;margin-bottom:12px;">
+        <div style="font-size:0.68rem;font-weight:700;color:var(--txt-secondary);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">
+            👥 Estado de bartenders
+        </div>`;
+
+    allUsers.forEach((userName, uid) => {
+        html += `<div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);">`;
+        html += `<div style="font-size:0.78rem;font-weight:600;color:var(--txt-primary);margin-bottom:6px;">
+            <span style="display:inline-block;width:26px;height:26px;border-radius:50%;background:var(--accent-dim);color:var(--accent);font-size:0.7rem;font-weight:700;text-align:center;line-height:26px;margin-right:6px;">${escapeHtml(userName.slice(0,2).toUpperCase())}</span>
+            ${escapeHtml(userName)}
+        </div>`;
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+
+        AREA_KEYS.forEach(area => {
+            const status     = finalizados[area]?.[uid];
+            const finalizado = status?.finalizado;
+            const areaLabel  = AREAS_AUDITORIA[area];
+            const hasConteo  = state.products.some(p =>
+                state.auditoriaConteoPorUsuario[p.id]?.[area]?.[uid] !== undefined
+            );
+
+            if (finalizado) {
+                const ts = status.ts
+                    ? new Date(status.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '';
+                html += `<div style="display:flex;align-items:center;gap:4px;padding:4px 8px;
+                            background:var(--green-dim);border:1px solid rgba(34,197,94,.20);
+                            border-radius:100px;font-size:0.65rem;color:var(--green-text);">
+                    <i class="${AREAS_AUDITORIA_FA[area]}" style="font-size:0.6rem;"></i>
+                    ${areaLabel} ✓${ts ? ' ' + ts : ''}
+                    <button data-uid="${escapeHtml(uid)}" data-area="${area}"
+                        onclick="window.reabrirConteoUsuario(this.dataset.uid, this.dataset.area)"
+                        style="background:none;border:none;cursor:pointer;color:var(--amber);
+                               font-size:0.65rem;padding:0 2px;min-height:auto;"
+                        title="Reabrir conteo de ${areaLabel} para ${escapeHtml(userName)}">
+                        🔓
+                    </button>
+                </div>`;
+            } else if (hasConteo) {
+                html += `<span style="padding:4px 8px;background:var(--amber-dim);border:1px solid rgba(251,191,36,.20);
+                            border-radius:100px;font-size:0.65rem;color:var(--amber);">
+                    <i class="${AREAS_AUDITORIA_FA[area]}" style="font-size:0.6rem;"></i>
+                    ${areaLabel} ⏳
+                </span>`;
+            } else {
+                html += `<span style="padding:4px 8px;background:var(--surface);border:1px solid var(--border);
+                            border-radius:100px;font-size:0.65rem;color:var(--txt-muted);">
+                    ${areaLabel}
+                </span>`;
+            }
+        });
+
+        html += '</div></div>';
+    });
+
     html += '</div>';
+    return html;
+}
+
+// ═════════════════════════════════════════════════════════════
+//  RENDER: PANEL DE COMPARACIÓN + PUBLICAR REPORTE
+// ═════════════════════════════════════════════════════════════
+
+export function renderAuditComparePanel() {
+    const isAdmin = state.userRole === 'admin';
+
+    const hasAny = state.products.some(p =>
+        AREA_KEYS.some(area =>
+            Object.keys(state.auditoriaConteoPorUsuario[p.id]?.[area] || {}).length > 1
+        )
+    );
+
+    let conflictos = 0;
+    if (hasAny) {
+        state.products.forEach(p => {
+            AREA_KEYS.forEach(area => {
+                const stats = calcAuditStats(p.id, area);
+                if (stats?.count >= 2 && stats.hasConflict) conflictos++;
+            });
+        });
+    }
+
+    let html = '';
+
+    if (hasAny) {
+        html += '<div class="bg-white rounded-xl p-4 mb-4 shadow-md" style="border:1px solid var(--border-mid);">';
+        html += '<p style="font-size:0.72rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);margin-bottom:10px;">📊 Comparación multiusuario</p>';
+        html += conflictos > 0
+            ? `<p style="color:var(--red-text);font-size:0.75rem;font-weight:600;">⚠️ ${conflictos} diferencia${conflictos !== 1 ? 's' : ''} detectada${conflictos !== 1 ? 's' : ''}</p>`
+            : '<p style="color:var(--green-text);font-size:0.75rem;font-weight:600;">✓ Sin conflictos detectados</p>';
+        html += '</div>';
+    }
+
+    // Botón publicar reporte (admin + todas las áreas completadas)
+    if (isAdmin && auditoriaTodasCompletas()) {
+        html += `<button onclick="window.openPublicarReporteModal()"
+            style="width:100%;padding:12px;margin-bottom:12px;
+                   background:linear-gradient(135deg,#065f46,#047857);
+                   border:1px solid rgba(34,197,94,.28);border-radius:var(--r-md);
+                   color:#86efac;font-size:0.85rem;font-weight:700;cursor:pointer;
+                   display:flex;align-items:center;justify-content:center;gap:8px;">
+            📊 Publicar reporte final y notificar usuarios
+        </button>`;
+    }
+
     return html;
 }
 
@@ -255,7 +417,23 @@ export function renderAuditComparePanel() {
 //  FLUJO DE AUDITORÍA
 // ═════════════════════════════════════════════════════════════
 
+/**
+ * Entra al modo de conteo de un área.
+ * Si el usuario ya finalizó esa área (y no es admin), muestra mensaje de bloqueo.
+ */
 export function auditoriaEntrarArea(area) {
+    const userId  = _getCurrentUserId();
+    const isAdmin = state.userRole === 'admin';
+
+    // Verificar lock (no aplica a admin)
+    if (!isAdmin) {
+        const lock = state.conteoFinalizadoPorUsuario?.[area]?.[userId];
+        if (lock?.finalizado) {
+            showNotification('🔒 Ya finalizaste el conteo de esta área. Espera que el admin lo reabra si necesitas corregir algo.');
+            return;
+        }
+    }
+
     state.auditoriaAreaActiva = area;
     state.auditoriaView       = 'counting';
     state.isAuditoriaMode     = true;
@@ -265,85 +443,122 @@ export function auditoriaEntrarArea(area) {
 }
 
 /**
- * Finaliza el conteo de una zona y la marca como completada.
+ * Finaliza el conteo del usuario en el área activa.
  *
- * FLUJO (3 operaciones paralelas no bloqueantes):
- *  1. txCloseZone(area)          — transacción dot-notation en doc principal
- *  2. syncConteoAtomicoPorArea   — transacción en conteoAreas/{area}
- *  3. syncConteoPorUsuarioToFirestore — transacción en conteoPorUsuario/{area}
+ * FLUJO:
+ *  1. Copia auditoriaConteo → auditoriaConteoPorUsuario (slot del usuario)
+ *  2. Marca al usuario como finalizado en conteoFinalizadoPorUsuario
+ *  3. Marca auditoriaStatus[area] = 'completada'
+ *  4. Sincroniza a Firestore (txCloseZone + syncConteoPorUsuarioToFirestore)
+ *  5. Envía notificación al admin
  */
 export function auditoriaFinalizarConteo() {
     if (!state.auditoriaAreaActiva) return;
     const area       = state.auditoriaAreaActiva;
     const nombreArea = AREAS_AUDITORIA[area];
+    const userId     = _getCurrentUserId();
+    const userName   = _getCurrentUserName();
 
     showConfirm(
-        `¿Finalizar conteo de ${nombreArea}?\n\nEsto guardará los datos del área y te regresará al panel de áreas.`,
+        `¿Finalizar tu conteo de ${nombreArea}?\n\nUna vez finalizado, ya no podrás modificarlo (a menos que el admin lo reabra).`,
         async () => {
-            // ── 1. Actualización local optimista ─────────────────────────────
+            // ── 1. Copiar conteo local al slot de este usuario ─────────
+            if (!state.auditoriaConteoPorUsuario) state.auditoriaConteoPorUsuario = {};
+
+            state.products.forEach(p => {
+                const conteo = state.auditoriaConteo[p.id]?.[area] || { enteras: 0, abiertas: [] };
+
+                if (!state.auditoriaConteoPorUsuario[p.id])         state.auditoriaConteoPorUsuario[p.id] = {};
+                if (!state.auditoriaConteoPorUsuario[p.id][area])   state.auditoriaConteoPorUsuario[p.id][area] = {};
+
+                state.auditoriaConteoPorUsuario[p.id][area][userId] = {
+                    enteras:  conteo.enteras || 0,
+                    abiertas: Array.isArray(conteo.abiertas) ? [...conteo.abiertas] : [],
+                    userId,
+                    userName,
+                    ts: Date.now(),
+                };
+            });
+
+            // ── 2. Marcar usuario como finalizado ──────────────────────
+            if (!state.conteoFinalizadoPorUsuario)          state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
+            if (!state.conteoFinalizadoPorUsuario[area])    state.conteoFinalizadoPorUsuario[area] = {};
+
+            state.conteoFinalizadoPorUsuario[area][userId] = {
+                finalizado: true,
+                userName,
+                ts: Date.now(),
+            };
+
+            // ── 3. Marcar área como completada ─────────────────────────
             state.auditoriaStatus[area] = 'completada';
-            state.auditoriaView         = 'selection';
-            state.auditoriaAreaActiva   = null;
-            state.isAuditoriaMode       = false;
+
+            // ── 4. Actualización de UI ──────────────────────────────────
+            state.auditoriaView       = 'selection';
+            state.auditoriaAreaActiva = null;
+            state.isAuditoriaMode     = false;
             saveToLocalStorage();
 
-            showNotification(`✅ Conteo de ${nombreArea} guardado`);
+            showNotification(`✅ Conteo de ${nombreArea} finalizado`);
 
             const { renderTab } = await import('./render.js');
             renderTab();
 
-            // ── 2. Operaciones Firestore (paralelas, no bloquean la UI) ──────
+            // ── 5. Sincronizar a Firestore ──────────────────────────────
             if (!window._db || !navigator.onLine) {
-                console.info(`[Audit] Sin Firebase/conexión — cierre de "${area}" guardado localmente.`);
+                console.info(`[Audit] Sin Firebase — cierre de "${area}" guardado localmente.`);
                 return;
             }
 
-            // Notificar al admin que un área fue completada
-            const usuario = state.currentUser?.email || state.auditCurrentUser?.userName || 'Usuario';
+            // Notificar al admin
             import('./notificaciones.js').then(m => m.enviarNotificacion({
                 tipo:        'conteo',
-                mensaje:     `${usuario} completó el conteo de ${nombreArea}`,
-                usuarioId:   state.currentUser?.uid || state.auditCurrentUser?.userId || 'anon',
-                usuarioName: usuario,
+                mensaje:     `${userName} finalizó el conteo de ${nombreArea}`,
+                usuarioId:   userId,
+                usuarioName: userName,
                 datos:       { area, status: 'completada' },
             })).catch(() => {});
 
-            // Ejecutar las 3 transacciones en paralelo
-            const [zoneResult] = await Promise.allSettled([
+            // Sincronizar lock status a Firestore junto con conteoPorUsuario
+            await Promise.allSettled([
                 txCloseZone(area).then(result => {
-                    if (result.wasAlreadyClosed) {
-                        console.info(`[Audit] Zona "${area}" ya estaba cerrada por otro dispositivo.`);
-                        showNotification(`ℹ️ ${nombreArea} ya fue cerrada por otro dispositivo`);
-                    }
-                    if (result.mergedStatus) {
-                        const prevStatus = { ...state.auditoriaStatus };
+                    if (result?.mergedStatus) {
                         state.auditoriaStatus = result.mergedStatus;
-                        // FIX v1.2: AREA_KEYS ahora importado correctamente
-                        const changed = AREA_KEYS.some(a => prevStatus[a] !== result.mergedStatus[a]);
-                        if (changed) {
-                            saveToLocalStorage();
-                            renderTab();
-                            console.info('[Audit] Estado de zonas sincronizado con Firestore:', result.mergedStatus);
-                        }
+                        saveToLocalStorage();
                     }
-                    return result;
                 }),
-
                 syncConteoAtomicoPorArea(area).catch(err => {
-                    console.warn('[Audit] syncConteoAtomicoPorArea falló (no crítico):', err?.message);
+                    console.warn('[Audit] syncConteoAtomicoPorArea falló:', err?.message);
                 }),
-
                 syncConteoPorUsuarioToFirestore(area).catch(err => {
-                    console.warn('[Audit] syncConteoPorUsuarioToFirestore falló (no crítico):', err?.message);
+                    console.warn('[Audit] syncConteoPorUsuarioToFirestore falló:', err?.message);
                 }),
+                // Sincronizar conteoFinalizadoPorUsuario directamente
+                _syncLockStatusToFirestore(area),
             ]);
-
-            if (zoneResult.status === 'rejected') {
-                console.error('[Audit] txCloseZone falló:', zoneResult.reason);
-                showNotification('⚠️ Error al confirmar el cierre en la nube — se reintentará');
-            }
         }
     );
+}
+
+/**
+ * Sincroniza conteoFinalizadoPorUsuario[area] a Firestore.
+ * Usa un campo especial '_finalizados' dentro del doc de conteoPorUsuario.
+ */
+async function _syncLockStatusToFirestore(area) {
+    if (!window._db || !window.FIRESTORE_DOC_ID) return;
+    try {
+        const docRef = window._db
+            .collection('inventarioApp')
+            .doc(window.FIRESTORE_DOC_ID)
+            .collection('conteoPorUsuario')
+            .doc(area);
+        await docRef.set(
+            { _finalizados: state.conteoFinalizadoPorUsuario[area] || {} },
+            { merge: true }
+        );
+    } catch (e) {
+        console.warn('[Audit] Error al sincronizar lock status:', e?.message);
+    }
 }
 
 export function auditoriaVolverSeleccion() {
@@ -362,48 +577,198 @@ export function auditoriaTodasCompletas() {
     return Object.values(state.auditoriaStatus).every(s => s === 'completada');
 }
 
+// ═════════════════════════════════════════════════════════════
+//  REABRIR CONTEO (solo admin)
+// ═════════════════════════════════════════════════════════════
+
 /**
- * Reinicia la auditoría completa.
- * Usa resetConteoAtomicoEnFirestore() — batch + transaction atómicos.
+ * Admin desbloquea el conteo de un usuario específico en un área.
+ * El usuario puede volver a contar y debe finalizar de nuevo.
  */
-export function auditoriaResetear() {
-    // FIX-4: el reset requiere conexión. Sin ella, el estado local se limpia
-    // pero Firestore conserva los conteos de otros dispositivos. Al reconectar,
-    // los onSnapshot reaplican esos datos y el reset queda inconsistente.
-    if (!navigator.onLine) {
-        showNotification('⚠️ Necesitas conexión para iniciar una nueva auditoría');
+export async function reabrirConteoUsuario(userId, area) {
+    if (state.userRole !== 'admin') {
+        showNotification('⚠️ Solo el administrador puede reabrir conteos');
         return;
     }
-    showConfirm(
-        '⚠️ ¿Iniciar nueva auditoría?\n\nSe borrarán todos los conteos actuales de las tres áreas.',
-        async () => {
+
+    const areaLabel = AREAS_AUDITORIA[area] || area;
+    const userName  = state.conteoFinalizadoPorUsuario?.[area]?.[userId]?.userName || userId.slice(0, 12);
+
+    const ok = await showConfirm(
+        `¿Reabrir el conteo de ${areaLabel} para "${userName}"?\n\nEl usuario deberá volver a finalizar su conteo para que sus datos queden validados.`
+    );
+    if (!ok) return;
+
+    // Desbloquear al usuario
+    if (!state.conteoFinalizadoPorUsuario)         state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
+    if (!state.conteoFinalizadoPorUsuario[area])   state.conteoFinalizadoPorUsuario[area] = {};
+
+    state.conteoFinalizadoPorUsuario[area][userId] = {
+        ...(state.conteoFinalizadoPorUsuario[area][userId] || {}),
+        finalizado: false,
+    };
+
+    // Si ningún usuario tiene finalizado=true en esa área, regresar a pendiente
+    const anyStillFinalized = Object.values(state.conteoFinalizadoPorUsuario[area])
+        .some(u => u.finalizado === true);
+    if (!anyStillFinalized) {
+        state.auditoriaStatus[area] = 'pendiente';
+    }
+
+    saveToLocalStorage();
+
+    // Notificar al usuario
+    if (window._db) {
+        try {
+            await import('./notificaciones.js').then(m => m.enviarNotificacion({
+                tipo:        'sistema',
+                mensaje:     `El administrador ha reabierto tu conteo de ${areaLabel}. Por favor vuelve a contar y presiona "Finalizar".`,
+                usuarioId:   userId,
+                usuarioName: 'Sistema',
+                datos:       { area, accion: 'reabrir' },
+            }));
+        } catch (e) {}
+
+        // Sincronizar el lock status a Firestore
+        try {
+            await _syncLockStatusToFirestore(area);
+        } catch (e) {}
+    }
+
+    showNotification(`✅ Conteo de ${areaLabel} reabierto para ${userName}`);
+    import('./render.js').then(m => m.renderTab());
+}
+
+// ═════════════════════════════════════════════════════════════
+//  RESETEAR / NUEVO CICLO
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * Reinicia toda la auditoría (ciclo nuevo).
+ * - Admin: borra TODO (conteos, locks, statuses) y notifica a usuarios.
+ * - Usuario: solo resetea su conteo local no finalizado.
+ */
+export function auditoriaResetear() {
+    const isAdmin = state.userRole === 'admin';
+
+    if (!isAdmin && !navigator.onLine) {
+        showNotification('⚠️ Necesitas conexión para esta operación');
+        return;
+    }
+
+    const msg = isAdmin
+        ? '⚠️ INICIAR NUEVO CICLO DE INVENTARIO\n\nEsto borrará TODOS los conteos actuales de TODOS los usuarios en las tres áreas.\n\nSe notificará a los bartenders automáticamente.\n\n¿Confirmar?'
+        : '⚠️ ¿Resetear tu conteo actual?\n\nSe borrarán los conteos no finalizados de este dispositivo.';
+
+    showConfirm(msg, async () => {
+        if (isAdmin) {
+            // ── Reset completo ──────────────────────────────────────
             state.auditoriaStatus           = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
             state.auditoriaConteo           = {};
             state.auditoriaConteoPorUsuario = {};
+            state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
+            state.inventarioConteo          = {};
             state.auditoriaView             = 'selection';
             state.auditoriaAreaActiva       = null;
             state.isAuditoriaMode           = false;
             saveToLocalStorage();
-            showNotification('Nueva auditoría iniciada');
+
+            showNotification('🔄 Nuevo ciclo iniciado');
+
             const { renderTab } = await import('./render.js');
             renderTab();
 
+            // ── Sincronizar con Firestore ───────────────────────────
             if (window._db && navigator.onLine) {
                 try {
                     await resetConteoAtomicoEnFirestore();
-                    console.info('[Audit] ✓ Reset completado en Firestore.');
+                    // Limpiar locks en Firestore
+                    const batch = window._db.batch();
+                    AREA_KEYS.forEach(area => {
+                        const ref = window._db
+                            .collection('inventarioApp')
+                            .doc(window.FIRESTORE_DOC_ID)
+                            .collection('conteoPorUsuario')
+                            .doc(area);
+                        batch.set(ref, { _finalizados: {} }, { merge: true });
+                    });
+                    await batch.commit();
+                    console.info('[Audit] ✓ Reset completo en Firestore.');
                 } catch (err) {
-                    console.warn('[Audit] Reset en Firestore falló — se reintentará:', err?.message);
+                    console.warn('[Audit] Reset en Firestore falló:', err?.message);
                 }
+
+                // Notificar a todos los usuarios (broadcast)
+                try {
+                    await import('./notificaciones.js').then(m => m.enviarNotificacion({
+                        tipo:        'sistema',
+                        mensaje:     '🔄 El administrador ha iniciado un nuevo ciclo de inventario. Se han reseteado todos los conteos.',
+                        usuarioId:   'broadcast',
+                        usuarioName: 'Sistema',
+                        datos:       { accion: 'nuevo_ciclo', ts: Date.now() },
+                    }));
+                } catch (e) {}
             }
+        } else {
+            // Usuario: solo limpia su conteo local no finalizado
+            const userId = _getCurrentUserId();
+            AREA_KEYS.forEach(area => {
+                const lock = state.conteoFinalizadoPorUsuario?.[area]?.[userId];
+                if (lock?.finalizado) return; // No tocar lo ya finalizado
+
+                // Limpiar solo las entradas no finalizadas
+                state.products.forEach(p => {
+                    if (state.auditoriaConteo[p.id]?.[area]) {
+                        delete state.auditoriaConteo[p.id][area];
+                    }
+                });
+            });
+
+            state.auditoriaView       = 'selection';
+            state.auditoriaAreaActiva = null;
+            state.isAuditoriaMode     = false;
+            saveToLocalStorage();
+
+            showNotification('🔄 Conteo local reseteado');
+            const { renderTab } = await import('./render.js');
+            renderTab();
         }
-    );
+    });
+}
+
+// ═════════════════════════════════════════════════════════════
+//  CARGA DE LOCK STATUS DESDE FIRESTORE (en onSnapshot)
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * Procesa el campo _finalizados de un snapshot de conteoPorUsuario.
+ * Llamado desde sync.js cuando llega un onSnapshot del área.
+ *
+ * @param {string} area
+ * @param {object} docData  — data() del documento de Firestore
+ */
+export function applyLockStatusFromSnapshot(area, docData) {
+    if (!docData?._finalizados) return;
+    if (!state.conteoFinalizadoPorUsuario)         state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
+    if (!state.conteoFinalizadoPorUsuario[area])   state.conteoFinalizadoPorUsuario[area] = {};
+
+    // Merge: no sobreescribir locks locales más nuevos
+    const remote = docData._finalizados;
+    Object.entries(remote).forEach(([uid, data]) => {
+        const local = state.conteoFinalizadoPorUsuario[area][uid];
+        if (!local || (data.ts || 0) > (local.ts || 0)) {
+            state.conteoFinalizadoPorUsuario[area][uid] = data;
+        }
+    });
+
+    saveToLocalStorage();
 }
 
 // ── Bindings globales ─────────────────────────────────────────
-window.auditSaveName            = auditSaveName;
-window.toggleAuditRename        = toggleAuditRename;
-window.auditoriaEntrarArea      = auditoriaEntrarArea;
-window.auditoriaFinalizarConteo = auditoriaFinalizarConteo;
-window.auditoriaVolverSeleccion = auditoriaVolverSeleccion;
-window.auditoriaResetear        = auditoriaResetear;
+window.auditSaveName             = auditSaveName;
+window.toggleAuditRename         = toggleAuditRename;
+window.auditoriaEntrarArea       = auditoriaEntrarArea;
+window.auditoriaFinalizarConteo  = auditoriaFinalizarConteo;
+window.auditoriaVolverSeleccion  = auditoriaVolverSeleccion;
+window.auditoriaResetear         = auditoriaResetear;
+window.reabrirConteoUsuario      = reabrirConteoUsuario;

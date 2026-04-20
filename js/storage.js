@@ -1,26 +1,13 @@
 /**
- * js/storage.js — v2.3 CORREGIDO
+ * js/storage.js — v2.4
  * ══════════════════════════════════════════════════════════════
  * Persistencia local con localStorage (offline-first).
  *
- * FIX BUG-9:
- *   saveToLocalStorage no incluía 3 campos críticos:
- *
- *   • auditoriaView — si el bartender recargaba durante un conteo,
- *     auditoriaView volvía a 'selection' y la pantalla de conteo
- *     desaparecía aunque el conteo estuviera activo.
- *
- *   • adjustmentsPending — cola offline de ajustes de stock
- *     solicitados por usuarios sin conexión. Al recargar, la cola
- *     se vaciaba y los ajustes nunca llegaban al admin.
- *
- *   • ajustesPendientes — lista de ajustes pendientes del admin.
- *     Se reconstruye desde Firestore vía listener, pero guardarla
- *     evita el parpadeo de "sin ajustes" durante la reconexión.
- *
- * Correcciones anteriores (v2.2):
- *   • smartAutoSave() — solo guarda si el estado cambió (hash)
- *   • searchTerm — se perdía en cada recarga
+ * NUEVO v2.4:
+ *   conteoFinalizadoPorUsuario — incluido en save/load para
+ *   persistir el estado de bloqueo por usuario entre recargas.
+ *   Sin esto, al recargar la página se pierde quién ya finalizó
+ *   y el admin no puede ver el estado correcto de los usuarios.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -31,28 +18,30 @@ const STORAGE_KEY = 'inventarioApp_data';
 export function saveToLocalStorage() {
   try {
     const dataToSave = {
-      products:                  state.products,
-      cart:                      state.cart,
-      orders:                    state.orders,
-      inventories:               state.inventories,
-      activeTab:                 state.activeTab,
-      selectedArea:              state.selectedArea,
-      selectedGroup:             state.selectedGroup,
-      searchTerm:                state.searchTerm,
-      inventarioConteo:          state.inventarioConteo,
-      auditoriaConteo:           state.auditoriaConteo,
-      auditoriaStatus:           state.auditoriaStatus,
-      auditoriaConteoPorUsuario: state.auditoriaConteoPorUsuario,
-      // FIX BUG-9: campos que faltaban
-      auditoriaView:             state.auditoriaView,
-      auditoriaAreaActiva:       state.auditoriaAreaActiva,
-      isAuditoriaMode:           state.isAuditoriaMode,
-      adjustmentsPending:        state.adjustmentsPending,
-      ajustesPendientes:         state.ajustesPendientes,
-      // fin fix
-      ajustes:                   state.ajustes,
-      syncEnabled:               state.syncEnabled,
-      _lastModified:             Date.now(),
+      products:                    state.products,
+      cart:                        state.cart,
+      orders:                      state.orders,
+      inventories:                 state.inventories,
+      activeTab:                   state.activeTab,
+      selectedArea:                state.selectedArea,
+      selectedGroup:               state.selectedGroup,
+      searchTerm:                  state.searchTerm,
+      inventarioConteo:            state.inventarioConteo,
+      auditoriaConteo:             state.auditoriaConteo,
+      auditoriaStatus:             state.auditoriaStatus,
+      auditoriaConteoPorUsuario:   state.auditoriaConteoPorUsuario,
+      // FIX BUG-9
+      auditoriaView:               state.auditoriaView,
+      auditoriaAreaActiva:         state.auditoriaAreaActiva,
+      isAuditoriaMode:             state.isAuditoriaMode,
+      adjustmentsPending:          state.adjustmentsPending,
+      ajustesPendientes:           state.ajustesPendientes,
+      // NUEVO v2.4: bloqueo por usuario
+      conteoFinalizadoPorUsuario:  state.conteoFinalizadoPorUsuario,
+      // fin nuevo
+      ajustes:                     state.ajustes,
+      syncEnabled:                 state.syncEnabled,
+      _lastModified:               Date.now(),
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
@@ -94,13 +83,21 @@ export function loadFromLocalStorage() {
     if (data.ajustes)                          state.ajustes                   = data.ajustes;
     if (data.syncEnabled !== undefined)        state.syncEnabled               = data.syncEnabled;
 
-    // FIX BUG-9: restaurar campos que antes no se guardaban
+    // FIX BUG-9
     if (data.auditoriaView)                    state.auditoriaView             = data.auditoriaView;
     if (data.auditoriaAreaActiva !== undefined) state.auditoriaAreaActiva      = data.auditoriaAreaActiva;
     if (data.isAuditoriaMode !== undefined)    state.isAuditoriaMode           = data.isAuditoriaMode;
     if (Array.isArray(data.adjustmentsPending)) state.adjustmentsPending       = data.adjustmentsPending;
     if (Array.isArray(data.ajustesPendientes))  state.ajustesPendientes        = data.ajustesPendientes;
-    // fin fix
+
+    // NUEVO v2.4: bloqueo por usuario
+    if (data.conteoFinalizadoPorUsuario && typeof data.conteoFinalizadoPorUsuario === 'object') {
+      state.conteoFinalizadoPorUsuario = {
+        almacen: data.conteoFinalizadoPorUsuario.almacen || {},
+        barra1:  data.conteoFinalizadoPorUsuario.barra1  || {},
+        barra2:  data.conteoFinalizadoPorUsuario.barra2  || {},
+      };
+    }
 
     // Toggle de sync desde clave independiente (prioridad)
     try {

@@ -1,19 +1,14 @@
 /**
- * js/state.js — v2.4 DEFINITIVO
+ * js/state.js — v2.5
  * ══════════════════════════════════════════════════════════════
  * Estado global centralizado de la aplicación.
- * TODAS las propiedades que cualquier módulo lee/escribe deben
- * estar declaradas aquí — sin excepción.
  *
- * FIX BUG-7:
- *   isAuditoriaMode — audit.js lo escribe en 4 funciones:
- *     auditoriaEntrarArea()      → true
- *     auditoriaFinalizarConteo() → false
- *     auditoriaVolverSeleccion() → false
- *     auditoriaResetear()        → false
- *   Sin declarar aquí, loadFromLocalStorage no puede restaurarlo
- *   entre sesiones. Si el bartender recarga durante un conteo
- *   activo, el modo auditoría queda en false y el conteo se pierde.
+ * NUEVO v2.5:
+ *   conteoFinalizadoPorUsuario — rastrea qué usuarios han
+ *   finalizado su conteo en cada área (mecanismo de bloqueo).
+ *   { [area]: { [userId]: { finalizado, userName, ts } } }
+ *   Permite al admin ver el estado por usuario y reabrir
+ *   conteos individuales sin afectar a otros usuarios.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -56,9 +51,6 @@ export const state = {
   auditoriaView: 'selection',
 
   // FIX BUG-7: flag de modo auditoría activo.
-  // audit.js lo escribe en 4 funciones. Sin declarar aquí,
-  // loadFromLocalStorage no puede restaurarlo al recargar,
-  // y el conteo activo se pierde.
   isAuditoriaMode: false,
 
   // ─── Multi-usuario ────────────────────────────────────────────
@@ -67,6 +59,16 @@ export const state = {
 
   // { userId, userName, role }
   auditCurrentUser: null,
+
+  // ─── NUEVO v2.5: Bloqueo por usuario ─────────────────────────
+  // Rastrea qué usuarios han finalizado su conteo en cada área.
+  // Admin puede ver y reabrir conteos individuales.
+  // { [area]: { [userId]: { finalizado: bool, userName: str, ts: num } } }
+  conteoFinalizadoPorUsuario: {
+    almacen: {},
+    barra1:  {},
+    barra2:  {},
+  },
 
   // ─── Sesión Firebase ─────────────────────────────────────────
   currentUser:  null,   // firebase.User | null
@@ -83,21 +85,16 @@ export const state = {
   _lastDataHash:      '',
 
   // ─── Ajustes pendientes offline ──────────────────────────────
-  // Cola de ajustes solicitados sin conexión — se suben al reconectar.
   adjustmentsPending: [],
 
   // ─── Notificaciones ──────────────────────────────────────────
-  // NOTA: nombre en inglés — notificaciones.js usa state.notifications
   notifications:       [],
   notificationsUnread: 0,
 
   // ─── Ajustes del admin ───────────────────────────────────────
   ajustesPendientes: [],
-
-  // Configuración sincronizada
   ajustes: {},
 
   // ─── Reportes ────────────────────────────────────────────────
   reportesPublicados: [],
 };
-

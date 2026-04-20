@@ -1,44 +1,38 @@
 /**
- * js/reportes.js — v1.1 CORREGIDO
+ * js/reportes.js — v2.0
  * ══════════════════════════════════════════════════════════════
  * Módulo de reportes publicados.
  *
- * CORRECCIÓN v1.1:
+ * NUEVO v2.0:
  * ──────────────────────────────────────────────────────────────
- * BUG: publicarReporte() leía los datos de enteras/abiertas desde
- *   state.inventarioConteo[p.id][area], que almacena un NÚMERO PLANO
- *   (ej: 5), no un objeto { enteras, abiertas }.
+ * ① publicarReporte() usa calcularTotalMultiUsuario para
+ *   consolidar correctamente los conteos de múltiples bartenders
+ *   (promedio de enteras, suma de botellas abiertas).
  *
- *   El código hacía:
- *     const d = (state.inventarioConteo[p.id] || {})[area] || { enteras: 0, abiertas: [] };
- *     const enteras  = d.enteras || 0;    // siempre 0 — d es un número
- *     const abiertas = d.abiertas || [];  // siempre [] — d es un número
- *
- *   Resultado: el Excel del reporte publicado siempre mostraba 0
- *   en las columnas "Enteras" y "Abiertas", aunque hubiera conteos.
- *   El campo "Total" era correcto (venía de calcularTotalConAbiertas).
- *
- *   CORRECCIÓN: Leer enteras/abiertas desde state.auditoriaConteo,
- *   que sí tiene la estructura correcta { enteras, abiertas: [...] }.
- *   El campo total sigue viniendo de calcularTotalConAbiertas para
- *   mantener los cálculos de fracciones de botellas abiertas.
+ * ② descargarReporteExcel() genera el formato EXACTO:
+ *   Hoja "Auditoría"
+ *   Columnas: ID | Nombre | Unidad | Grupo | CapacidadML | PesoBotellaOz
+ *             | [Área Enteras | Área Abiertas (oz) | Área Total] x3
+ *             | Total General | Estado
+ *   Subtotales por categoría.
+ *   Gran Total al final.
  *
  * FLUJO:
  *   Admin → openPublicarReporteModal()
  *     → publicarReporte(titulo)
  *       → Escribe en /reportesPublicados/{id}
  *       → Notifica a todos los usuarios (broadcast)
- *   Usuario → ve la sección "Reportes" en Historia
+ *   Usuario → ve sección "Reportes" en Historia
  *     → descargarReporteExcel(reporteId) → .xlsx local
- *
- * COLECCIÓN FIRESTORE:  /reportesPublicados/{reporteId}
  * ══════════════════════════════════════════════════════════════
  */
 
 import { state }                        from './state.js';
-import { AREA_KEYS, AREAS }             from './constants.js';
+import { AREA_KEYS, AREAS,
+         PESO_BOTELLA_VACIA_OZ }        from './constants.js';
 import { showNotification, escapeHtml } from './ui.js';
 import { calcularTotalConAbiertas,
+         calcularTotalMultiUsuario,
          tieneConversion }              from './products.js';
 import { enviarNotificacion }           from './notificaciones.js';
 
@@ -57,23 +51,26 @@ export function openPublicarReporteModal() {
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;' +
         'display:flex;align-items:center;justify-content:center;animation:fadeIn 0.15s ease both;';
 
-    const totalProductos = state.products.length;
-    const areasCompletadas = Object.values(state.auditoriaStatus || {}).filter(s => s === 'completada').length;
+    const totalProductos    = state.products.length;
+    const areasCompletadas  = Object.values(state.auditoriaStatus || {}).filter(s => s === 'completada').length;
+    const usuariosTotal     = _contarUsuariosConConteo();
 
     overlay.innerHTML = `
         <div style="background:var(--card);border:1px solid var(--border-mid);border-radius:var(--r-lg);
-                    padding:24px 24px 20px;max-width:400px;width:90%;box-shadow:var(--shadow-modal);">
-            <p style="font-weight:600;font-size:0.95rem;color:var(--txt-primary);margin:0 0 4px;">
+                    padding:24px 24px 20px;max-width:420px;width:90%;box-shadow:var(--shadow-modal);">
+            <p style="font-weight:700;font-size:0.95rem;color:var(--txt-primary);margin:0 0 4px;">
                 📊 Publicar reporte final
             </p>
             <p style="font-size:0.75rem;color:var(--txt-muted);margin:0 0 16px;">
-                Se publicará el inventario actual. Los usuarios podrán descargarlo desde "Historia".
+                El reporte consolidará los conteos de todos los bartenders.<br>
+                Los usuarios recibirán notificación y podrán descargar el Excel.
             </p>
 
             <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
                         padding:10px 14px;margin-bottom:16px;font-size:0.78rem;color:var(--txt-secondary);">
                 <div>📦 ${totalProductos} producto(s)</div>
-                <div style="margin-top:3px;">🗺️ ${areasCompletadas}/3 áreas de auditoría completadas</div>
+                <div style="margin-top:3px;">🗺️ ${areasCompletadas}/3 áreas completadas</div>
+                <div style="margin-top:3px;">👥 ${usuariosTotal} bartender(s) con conteos registrados</div>
             </div>
 
             <div style="margin-bottom:16px;">
@@ -84,7 +81,7 @@ export function openPublicarReporteModal() {
                 <input id="_rp_titulo" type="text" value="Reporte ${fecha}"
                     style="width:100%;padding:8px 10px;background:var(--surface);
                            border:1px solid var(--border-mid);border-radius:var(--r-md);
-                           color:var(--txt-primary);font-size:0.85rem;">
+                           color:var(--txt-primary);font-size:0.85rem;box-sizing:border-box;">
             </div>
 
             <div style="display:flex;gap:10px;">
@@ -117,8 +114,18 @@ export function openPublicarReporteModal() {
     }, 60);
 }
 
+function _contarUsuariosConConteo() {
+    const uids = new Set();
+    Object.values(state.auditoriaConteoPorUsuario).forEach(porProducto => {
+        Object.values(porProducto).forEach(porArea => {
+            Object.keys(porArea).forEach(uid => uids.add(uid));
+        });
+    });
+    return uids.size;
+}
+
 // ═════════════════════════════════════════════════════════════
-//  PUBLICAR REPORTE (admin) — v1.1 CORREGIDO
+//  PUBLICAR REPORTE (admin) — v2.0
 // ═════════════════════════════════════════════════════════════
 
 export async function publicarReporte(titulo = '') {
@@ -131,44 +138,79 @@ export async function publicarReporte(titulo = '') {
     const fecha       = new Date().toLocaleDateString('es-MX');
     const tituloFinal = titulo || `Reporte ${fecha}`;
 
-    // Construir datos consolidados
+    // ── Construir datos consolidados ──────────────────────────
     const productos = state.products.map(p => {
         const areas = {};
         let totalLlenas   = 0;
-        let totalAbiertas = 0;
+        let totalOzAbiertas = 0;
 
         AREA_KEYS.forEach(area => {
-            // FIX v1.1: Leer enteras/abiertas desde auditoriaConteo (estructura correcta),
-            // NO desde inventarioConteo que es un número plano.
-            // inventarioConteo[p.id][area] = número plano (sin .enteras ni .abiertas)
-            // auditoriaConteo[p.id][area]  = { enteras: n, abiertas: [oz, ...] } ← correcto
-            const conteoAudit = state.auditoriaConteo[p.id]?.[area];
-            const enteras     = conteoAudit?.enteras || 0;
-            const abiertasArr = Array.isArray(conteoAudit?.abiertas) ? conteoAudit.abiertas : [];
-            const total       = calcularTotalConAbiertas(p.id, area);
+            // Datos del conteo consolidado (multi-usuario)
+            const porUsuario = state.auditoriaConteoPorUsuario[p.id]?.[area] || {};
+            const usuarios   = Object.values(porUsuario);
 
-            areas[area] = { enteras, abiertas: abiertasArr.length, total };
-            totalLlenas   += enteras;
-            // Sumar oz de botellas abiertas (para el reporte)
-            totalAbiertas += abiertasArr.reduce((s, v) => s + (typeof v === 'number' ? v : 0), 0);
+            let enteras, abiertasCount, totalOzArea;
+
+            if (usuarios.length > 0) {
+                // Promedio de enteras (redondeado)
+                const sumEnteras = usuarios.reduce((s, u) => s + (u.enteras || 0), 0);
+                enteras = Math.round(sumEnteras / usuarios.length);
+
+                // Suma total de oz (todas las botellas abiertas de todos los usuarios)
+                totalOzArea = 0;
+                abiertasCount = 0;
+                usuarios.forEach(u => {
+                    if (Array.isArray(u.abiertas)) {
+                        abiertasCount += u.abiertas.length;
+                        totalOzArea   += u.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0);
+                    }
+                });
+                totalOzArea = Math.round(totalOzArea * 100) / 100;
+            } else {
+                // Fallback: auditoriaConteo del dispositivo local
+                const c    = state.auditoriaConteo[p.id]?.[area] || {};
+                enteras    = c.enteras || 0;
+                const abArr = Array.isArray(c.abiertas) ? c.abiertas : [];
+                abiertasCount = abArr.length;
+                totalOzArea   = Math.round(abArr.reduce((s, v) => s + (parseFloat(v) || 0), 0) * 100) / 100;
+            }
+
+            // Total consolidado (usa calcularTotalMultiUsuario si hay multi-usuario,
+            // sino calcularTotalConAbiertas como fallback)
+            const total = usuarios.length > 0
+                ? Math.round((calcularTotalMultiUsuario(p.id, area) || 0) * 10000) / 10000
+                : Math.round((calcularTotalConAbiertas(p.id, area) || 0) * 10000) / 10000;
+
+            areas[area] = { enteras, abiertas: abiertasCount, totalOzAbiertas: totalOzArea, total };
+            totalLlenas    += enteras;
+            totalOzAbiertas += totalOzArea;
         });
 
-        const totalGeneral = AREA_KEYS.reduce((s, a) => s + (areas[a].total || 0), 0);
+        const totalGeneral = Math.round(
+            AREA_KEYS.reduce((s, a) => s + (areas[a].total || 0), 0) * 10000
+        ) / 10000;
+
         const totalMl = tieneConversion(p)
             ? Math.round(totalGeneral * p.capacidadMl)
             : null;
 
+        const estado = (p.capacidadMl && p.capacidadMl > 0 && p.pesoBotellaLlenaOz && p.pesoBotellaLlenaOz > 0)
+            ? 'Conversión realizada'
+            : 'Falta capacidadMl o pesoBotellaLlenaOz';
+
         return {
-            id:           p.id,
-            nombre:       p.name,
-            unidad:       p.unit || '',
-            grupo:        p.group || 'General',
-            capacidadMl:  p.capacidadMl || null,
+            id:              p.id,
+            nombre:          p.name,
+            unidad:          p.unit  || '',
+            grupo:           p.group || 'General',
+            capacidadMl:     p.capacidadMl        || null,
+            pesoBotellaOz:   p.pesoBotellaLlenaOz || null,
             areas,
             totalLlenas,
-            totalAbiertas: Math.round(totalAbiertas * 1000) / 1000,
-            totalGeneral:  Math.round(totalGeneral * 10000) / 10000,
+            totalOzAbiertas: Math.round(totalOzAbiertas * 1000) / 1000,
+            totalGeneral,
             totalMl,
+            estado,
         };
     });
 
@@ -181,6 +223,7 @@ export async function publicarReporte(titulo = '') {
         totalProductos:  productos.length,
         productos,
         auditoriaStatus: { ...state.auditoriaStatus },
+        conteoFinalizadoPorUsuario: state.conteoFinalizadoPorUsuario || {},
     };
 
     try {
@@ -191,7 +234,7 @@ export async function publicarReporte(titulo = '') {
         // Broadcast a todos los usuarios
         await enviarNotificacion({
             tipo:        'reporte',
-            mensaje:     `📊 Nuevo reporte disponible: "${tituloFinal}"`,
+            mensaje:     `📊 Nuevo reporte disponible: "${tituloFinal}" — ya puedes descargarlo en Historia`,
             usuarioId:   'broadcast',
             usuarioName: 'Sistema',
             datos:       { reporteId: docRef.id, titulo: tituloFinal },
@@ -202,12 +245,12 @@ export async function publicarReporte(titulo = '') {
 
     } catch (err) {
         console.error('[Reportes] Error al publicar:', err.message);
-        showNotification('⚠️ Error al publicar reporte');
+        showNotification('⚠️ Error al publicar reporte: ' + err.message);
     }
 }
 
 // ═════════════════════════════════════════════════════════════
-//  DESCARGAR REPORTE (admin y usuario)
+//  DESCARGAR REPORTE (admin y usuario) — FORMATO EXACTO v2.0
 // ═════════════════════════════════════════════════════════════
 
 export function descargarReporteExcel(reporteId) {
@@ -217,37 +260,93 @@ export function descargarReporteExcel(reporteId) {
     if (!reporte) { showNotification('⚠️ Reporte no encontrado'); return; }
     if (!window.XLSX) { showNotification('⚠️ Librería Excel no disponible'); return; }
 
-    // Cabecera
-    const headerRow = ['ID', 'Nombre', 'Unidad', 'Grupo', 'Capacidad ml'];
+    const AREA_LABELS = { almacen: 'Almacén', barra1: 'Barra 1', barra2: 'Barra 2' };
+
+    // ── Cabecera ─────────────────────────────────────────────────
+    const headerRow = ['ID', 'Nombre', 'Unidad', 'Grupo', 'CapacidadML', 'PesoBotellaOz'];
     AREA_KEYS.forEach(area => {
-        const label = AREAS[area] || area;
-        headerRow.push(`${label} Enteras`, `${label} Total`);
+        const label = AREA_LABELS[area] || area;
+        headerRow.push(`${label} Enteras`, `${label} Abiertas (oz)`, `${label} Total`);
     });
-    headerRow.push('Total General', 'Total ml');
+    headerRow.push('Total General', 'Estado');
 
-    const rows = [headerRow];
+    const NUM_COLS = headerRow.length;
+
+    // ── Agrupar productos por grupo ───────────────────────────────
+    const groupMap = new Map();
     (reporte.productos || []).forEach(p => {
-        const row = [p.id, p.nombre, p.unidad, p.grupo, p.capacidadMl ?? ''];
-        AREA_KEYS.forEach(area => {
-            const d = (p.areas || {})[area] || { enteras: 0, total: 0 };
-            row.push(d.enteras, d.total);
+        const g = (p.grupo || 'General').trim();
+        if (!groupMap.has(g)) groupMap.set(g, []);
+        groupMap.get(g).push(p);
+    });
+    const sortedGroups = [...groupMap.keys()].sort((a, b) => a.localeCompare(b, 'es'));
+
+    // ── Construir filas ───────────────────────────────────────────
+    const rows      = [headerRow];
+    let   granTotal = 0;
+
+    sortedGroups.forEach(groupName => {
+        const products = groupMap.get(groupName);
+        let subtotal   = 0;
+
+        products.forEach(p => {
+            const row = [
+                p.id,
+                p.nombre,
+                p.unidad     || '',
+                p.grupo      || 'General',
+                p.capacidadMl   != null ? p.capacidadMl   : '',
+                p.pesoBotellaOz != null ? p.pesoBotellaOz : '',
+            ];
+
+            AREA_KEYS.forEach(area => {
+                const d = (p.areas || {})[area] || { enteras: 0, totalOzAbiertas: 0, abiertas: 0, total: 0 };
+                // Compatibilidad: puede venir totalOzAbiertas (v2) o abiertas count (v1)
+                const oz = d.totalOzAbiertas != null ? d.totalOzAbiertas : d.abiertas || 0;
+                row.push(d.enteras || 0, oz, d.total || 0);
+            });
+
+            const tg    = p.totalGeneral || 0;
+            const estado = p.estado || (
+                (p.capacidadMl && p.pesoBotellaOz)
+                    ? 'Conversión realizada'
+                    : 'Falta capacidadMl o pesoBotellaLlenaOz'
+            );
+
+            row.push(tg, estado);
+            rows.push(row);
+            subtotal  += tg;
+            granTotal += tg;
         });
-        row.push(p.totalGeneral, p.totalMl ?? '');
-        rows.push(row);
+
+        // ── Subtotal por grupo ────────────────────────────────────
+        const subtotalRow = new Array(NUM_COLS).fill('');
+        subtotalRow[1] = `SUBTOTAL — ${groupName}`;
+        subtotalRow[NUM_COLS - 2] = Math.round(subtotal * 100) / 100;
+        rows.push(subtotalRow);
     });
 
-    // Fila de totales
-    const totalsRow = ['', 'TOTALES', '', '', ''];
-    AREA_KEYS.forEach(() => totalsRow.push('', ''));
-    const granTotal = (reporte.productos || []).reduce((s, p) => s + (p.totalGeneral || 0), 0);
-    totalsRow.push(Math.round(granTotal * 100) / 100, '');
-    rows.push(totalsRow);
+    // ── Gran Total ────────────────────────────────────────────────
+    const granTotalRow = new Array(NUM_COLS).fill('');
+    granTotalRow[1] = 'GRAN TOTAL';
+    granTotalRow[NUM_COLS - 2] = Math.round(granTotal * 100) / 100;
+    rows.push(granTotalRow);
 
+    // ── Hoja ─────────────────────────────────────────────────────
     const ws = window.XLSX.utils.aoa_to_sheet(rows);
-    const wb = window.XLSX.utils.book_new();
-    const sheetName = reporte.titulo.slice(0, 31).replace(/[:\\/?*[\]]/g, '');
-    window.XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Reporte');
-    const filename = `REPORTE_${(reporte.titulo || 'inventario').replace(/\s+/g, '_')}_${reporte.fecha.replace(/\//g, '-')}.xlsx`;
+    ws['!cols'] = [
+        { wch: 10 }, { wch: 32 }, { wch: 10 }, { wch: 16 },
+        { wch: 12 }, { wch: 14 },
+        ...AREA_KEYS.flatMap(() => [{ wch: 14 }, { wch: 16 }, { wch: 12 }]),
+        { wch: 14 }, { wch: 34 },
+    ];
+
+    const sheetName = (reporte.titulo || 'Auditoría').slice(0, 31).replace(/[:\\/?*[\]]/g, '');
+    const wb        = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Auditoría');
+
+    const fecha    = (reporte.fecha || new Date().toLocaleDateString('es-MX')).replace(/\//g, '-');
+    const filename = `REPORTE_${(reporte.titulo || 'inventario').replace(/\s+/g, '_')}_${fecha}.xlsx`;
     window.XLSX.writeFile(wb, filename);
     showNotification('✅ Reporte descargado');
 }
@@ -288,6 +387,8 @@ export function renderReportesPublicados() {
         </div>`;
     }
 
+    const AREA_LABELS = { almacen: 'Almacén', barra1: 'Barra 1', barra2: 'Barra 2' };
+
     let html = '<div class="space-y-2">';
     reportes.forEach((r, idx) => {
         const delay = Math.min(idx * 40, 300);
@@ -300,14 +401,14 @@ export function renderReportesPublicados() {
                     </div>
                     <div style="font-size:0.7rem;color:var(--txt-muted);margin-top:3px;">
                         ${escapeHtml(r.fecha)} · ${r.totalProductos || 0} productos
-                        · Publicado por ${escapeHtml(r.publicadoPor || '—')}
+                        · Por ${escapeHtml(r.publicadoPor || '—')}
                     </div>
                     <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;">
-                        ${['almacen','barra1','barra2'].map(a => {
+                        ${AREA_KEYS.map(a => {
                             const st = (r.auditoriaStatus || {})[a];
                             return st === 'completada'
-                                ? `<span style="font-size:0.60rem;font-weight:700;padding:1px 7px;border-radius:3px;background:var(--green-dim);color:var(--green-text);border:1px solid rgba(34,197,94,.20);">✓ ${AREAS[a]}</span>`
-                                : `<span style="font-size:0.60rem;padding:1px 7px;border-radius:3px;background:rgba(148,163,184,.10);color:var(--txt-muted);">${AREAS[a]}</span>`;
+                                ? `<span style="font-size:0.60rem;font-weight:700;padding:1px 7px;border-radius:3px;background:var(--green-dim);color:var(--green-text);border:1px solid rgba(34,197,94,.20);">✓ ${AREA_LABELS[a]}</span>`
+                                : `<span style="font-size:0.60rem;padding:1px 7px;border-radius:3px;background:rgba(148,163,184,.10);color:var(--txt-muted);">${AREA_LABELS[a]}</span>`;
                         }).join('')}
                     </div>
                 </div>

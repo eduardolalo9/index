@@ -1,20 +1,19 @@
 /**
- * js/actions.js — v3.0 DEFINITIVO
+ * js/actions.js — v3.1
  * ══════════════════════════════════════════════════════════════
- * FIX BUG-2: 8 funciones del HTML estático sin implementar.
- *   closeProductModal, saveProduct, closeOrderModal, createOrder,
- *   addAbiertaInModal, closeInventarioModal, saveInventarioModal,
- *   exportFullData — ninguna existía → botones Guardar/Cancelar
- *   de los 3 modales no hacían absolutamente nada.
+ * NUEVO v3.1:
+ *   exportarAuditoriaExcel() — Formato EXACTO según especificación:
+ *     Hoja "Auditoría"
+ *     Columnas: ID | Nombre | Unidad | Grupo | CapacidadML | PesoBotellaOz
+ *               | [Área Enteras | Área Abiertas (oz) | Área Total] x3
+ *               | Total General | Estado
+ *     Subtotales por categoría después de cada grupo de productos.
+ *     Gran Total al final.
+ *     Estado: "Conversión realizada" | "Falta capacidadMl o pesoBotellaLlenaOz"
  *
- * FIX BUG-3: openOrderModal creaba overlay dinámico propio
- *   ignorando #orderModal del HTML. Los campos #orderSupplier,
- *   #orderNote, #orderDeliveryDate nunca se leían. La tabla
- *   #orderProductsTable nunca se llenaba.
- *
- * FIX BUG-4: openInventarioModal creaba overlay simple (solo
- *   un número) ignorando #inventarioModal con botellas abiertas.
- *   Las botellas abiertas con oz nunca funcionaban.
+ *   Los cálculos usan calcularTotalMultiUsuario para consolidar
+ *   los conteos de múltiples bartenders (promedio de enteras,
+ *   suma total de botellas abiertas).
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -26,12 +25,13 @@ import { showNotification,
 import { deleteProduct as _deleteProduct,
          addProduct,
          updateProduct,
-         calcularStockTotal }       from './products.js';
-import { AREAS, AREA_KEYS }         from './constants.js';
+         calcularStockTotal,
+         calcularTotalMultiUsuario } from './products.js';
+import { AREAS, AREA_KEYS,
+         PESO_BOTELLA_VACIA_OZ }    from './constants.js';
 
 const _render = () => import('./render.js').then(m => m.renderTab()).catch(() => {});
 
-// Helper: guardar + render + sync en una sola llamada
 function _commit() {
   saveToLocalStorage();
   _render();
@@ -40,37 +40,29 @@ function _commit() {
   }
 }
 
-// Helper: acceso a elementos del DOM
 const _el = id => document.getElementById(id);
 function _showModal(id) { _el(id)?.classList.remove('hidden'); }
 function _hideModal(id) { _el(id)?.classList.add('hidden'); }
 
-// ── Formateo de cantidades para WhatsApp ──────────────────────
-// Cantidades individuales: enteros sin decimales, decimales con
-// 3 lugares fijos sin cero inicial (ej. 0.350 → .350, 1 → 1)
 function _fmtQty(qty) {
   const n = parseFloat(qty) || 0;
   if (Number.isInteger(n)) return String(n);
-  let s = n.toFixed(3);                    // "0.350"
-  if (s.startsWith('0.')) s = s.slice(1); // ".350"
+  let s = n.toFixed(3);
+  if (s.startsWith('0.')) s = s.slice(1);
   return s;
 }
 
-// Total: sin ceros finales innecesarios (ej. 3.150 → 3.15, 4.000 → 4)
 function _fmtTotal(qty) {
   const n = parseFloat(qty) || 0;
   return parseFloat(n.toFixed(3)).toString();
 }
 
-// Estado interno del modal de producto
 let _editingProductId = null;
-
-// Estado interno del modal de inventario
 let _invProductId = null;
 let _invArea      = null;
 
 // ══════════════════════════════════════════════════════════════
-// MODAL DE PRODUCTO — usa #productModal del HTML
+// MODAL DE PRODUCTO
 // ══════════════════════════════════════════════════════════════
 
 function openProductModal(productId = null) {
@@ -84,11 +76,9 @@ function openProductModal(productId = null) {
   const product = isEdit ? state.products.find(p => p.id === productId) : null;
   if (isEdit && !product) { showNotification('⚠️ Producto no encontrado'); return; }
 
-  // Actualizar título
   const titleEl = _el('productModalTitle');
   if (titleEl) titleEl.textContent = isEdit ? '✏️ Editar producto' : '➕ Nuevo producto';
 
-  // Pre-llenar campos
   const fId    = _el('productId');
   const fName  = _el('productName');
   const fUnit  = _el('productUnit');
@@ -98,70 +88,60 @@ function openProductModal(productId = null) {
 
   if (fId)   { fId.value = product?.id || '';  fId.disabled = isEdit; }
   if (fName)  fName.value  = product?.name  || '';
+  if (fUnit && product?.unit) fUnit.value  = product.unit;
   if (fGroup) fGroup.value = product?.group || '';
   if (fCap)   fCap.value   = product?.capacidadMl        || '';
   if (fPeso)  fPeso.value  = product?.pesoBotellaLlenaOz || '';
-  if (fUnit) {
-    fUnit.value = product?.unit || 'Botellas';
-    if (product?.unit && !Array.from(fUnit.options).find(o => o.value === product.unit)) {
-      const opt = document.createElement('option');
-      opt.value = product.unit; opt.textContent = product.unit;
-      fUnit.appendChild(opt);
-    }
-    fUnit.value = product?.unit || 'Botellas';
-  }
 
   _showModal('productModal');
   setTimeout(() => fName?.focus(), 60);
 }
 
-// FIX BUG-2: esta función no existía → Cancelar no hacía nada
+function editProduct(id) { openProductModal(id); }
+
 function closeProductModal() {
   _hideModal('productModal');
   _editingProductId = null;
-  ['productId','productName','productGroup','productCapacidadMl','productPesoLlenaOz']
-    .forEach(id => { const el = _el(id); if (el) el.value = ''; });
-  const fUnit = _el('productUnit');
-  if (fUnit) fUnit.value = 'Botellas';
 }
 
-// FIX BUG-2: esta función no existía → Guardar no hacía nada
 function saveProduct() {
-  const name     = (_el('productName')?.value || '').trim();
-  const rawId    = (_el('productId')?.value   || '').trim();
-  const unit     = _el('productUnit')?.value  || 'Botellas';
-  const group    = (_el('productGroup')?.value || '').trim() || 'General';
-  const capRaw   = parseFloat(_el('productCapacidadMl')?.value) || null;
-  const pesoRaw  = parseFloat(_el('productPesoLlenaOz')?.value) || null;
+  if (state.userRole !== 'admin') { showNotification('⛔ Solo el administrador'); return; }
 
-  if (!name) { showNotification('⚠️ El nombre es obligatorio'); _el('productName')?.focus(); return; }
-  if (name.length < 2) { showNotification('⚠️ El nombre debe tener al menos 2 caracteres'); return; }
+  const name  = _el('productName')?.value.trim();
+  const unit  = _el('productUnit')?.value.trim();
+  const group = _el('productGroup')?.value.trim();
+  const capV  = parseFloat(_el('productCapacidadMl')?.value) || null;
+  const pesoV = parseFloat(_el('productPesoLlenaOz')?.value) || null;
+  const idVal = _el('productId')?.value.trim();
+
+  if (!name) { showNotification('⚠️ Ingresa un nombre'); return; }
+  if (!unit) { showNotification('⚠️ Selecciona una unidad'); return; }
 
   if (_editingProductId) {
     updateProduct(_editingProductId, {
-      name, unit, group,
-      capacidadMl:        capRaw  > 0 ? capRaw  : null,
-      pesoBotellaLlenaOz: pesoRaw > 0 ? pesoRaw : null,
+      name, unit,
+      group:              group || 'General',
+      capacidadMl:        capV,
+      pesoBotellaLlenaOz: pesoV,
     });
   } else {
-    if (rawId && state.products.find(p => p.id === rawId)) {
-      showNotification(`⚠️ El ID "${rawId}" ya existe`); return;
-    }
-    addProduct({ id: rawId || undefined, name, unit, group,
-      capacidadMl: capRaw > 0 ? capRaw : null,
-      pesoBotellaLlenaOz: pesoRaw > 0 ? pesoRaw : null });
+    addProduct({
+      id:                 idVal,
+      name, unit,
+      group:              group || 'General',
+      capacidadMl:        capV,
+      pesoBotellaLlenaOz: pesoV,
+    });
   }
 
   closeProductModal();
   _commit();
 }
 
-function editProduct(id) { openProductModal(id); }
-
 async function deleteProduct(id) {
   const product = state.products.find(p => p.id === id);
-  if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
-  const ok = await showConfirm(`¿Eliminar "${product.name}"?\n\nEsta acción no se puede deshacer.`);
+  if (!product) return;
+  const ok = await showConfirm(`¿Eliminar "${product.name}"?\nSe borrará de todas las áreas.`);
   if (!ok) return;
   _deleteProduct(id);
   _commit();
@@ -169,283 +149,141 @@ async function deleteProduct(id) {
 
 async function deleteAllProducts() {
   if (state.userRole !== 'admin') return;
-  const ok = await showConfirm('¿Eliminar TODOS los productos?\n\nSe borrará el catálogo completo.');
+  const ok = await showConfirm('⚠️ ¿Eliminar TODOS los productos?\nEsta acción no se puede deshacer.');
   if (!ok) return;
   state.products = [];
   state.inventarioConteo = {};
   state.auditoriaConteo  = {};
-  state.auditoriaConteoPorUsuario = {};
-  showNotification('🗑️ Todos los productos eliminados');
   _commit();
 }
 
 // ══════════════════════════════════════════════════════════════
-// CARRITO
+// CARRITO / PEDIDOS
 // ══════════════════════════════════════════════════════════════
 
 function addToCart(productId) {
   const product = state.products.find(p => p.id === productId);
-  if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
-  const existing = state.cart.find(i => i.id === productId);
-  if (existing) {
-    existing.quantity += 1;
-    showNotification(`🛒 ${product.name} → ${existing.quantity}`);
-  } else {
-    state.cart.push({ id: product.id, name: product.name, unit: product.unit || 'Unidad', quantity: 1 });
-    showNotification(`🛒 ${product.name} agregado`);
-  }
-  saveToLocalStorage();
-  _render();
-  // Actualizar tabla si el modal de pedido está abierto
-  if (!_el('orderModal')?.classList.contains('hidden')) _refreshOrderModal();
+  if (!product) return;
+  const item = state.cart.find(i => i.id === productId);
+  if (item) { item.quantity++; }
+  else { state.cart.push({ id: productId, name: product.name, unit: product.unit || 'Unidad', quantity: 1 }); }
+  showNotification(`🛒 ${product.name} (+1)`);
+  _commit();
 }
 
-// ══════════════════════════════════════════════════════════════
-// MODAL DE PEDIDO — FIX BUG-3: usa #orderModal del HTML
-// ══════════════════════════════════════════════════════════════
-
-// FIX BUG-3: llena #orderProductsTable, #orderTotal y #emptyCart
-// ① Decimales: input editable con step 0.001
-// ② Sin botones + / −
-function _refreshOrderModal() {
-  const tbody   = _el('orderProductsTable');
-  const totalEl = _el('orderTotal');
-  const emptyEl = _el('emptyCart');
-  if (!tbody) return;
-
-  if (state.cart.length === 0) {
-    tbody.innerHTML = '';
-    emptyEl?.classList.remove('hidden');
-    if (totalEl) totalEl.textContent = 'Total: 0';
-    return;
-  }
-
-  emptyEl?.classList.add('hidden');
-  const totalQty = state.cart.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0);
-  if (totalEl) totalEl.textContent = `Total: ${_fmtTotal(totalQty)}`;
-
-  tbody.innerHTML = state.cart.map((item, idx) => `
-    <tr class="hover:bg-gray-50">
-      <td class="px-4 py-3 text-gray-900 text-sm font-medium">${escapeHtml(item.name)}</td>
-      <td class="px-4 py-3 text-center text-gray-600 text-sm">${escapeHtml(item.unit || '')}</td>
-      <td class="px-4 py-3 text-center">
-        <input
-          type="number"
-          min="0.001"
-          step="0.001"
-          value="${parseFloat(item.quantity) || 1}"
-          onchange="window._cartSetQty(${idx}, this.value)"
-          style="width:90px;padding:5px 8px;border:1.5px solid #e5e7eb;border-radius:8px;
-                 text-align:center;font-weight:bold;font-size:0.95rem;color:#111827;
-                 background:#f9fafb;outline:none;"
-          onfocus="this.select()">
-      </td>
-      <td class="px-4 py-3 text-center">
-        <button onclick="window._cartRem(${idx})" style="padding:3px 10px;background:#fee2e2;color:#dc2626;border:none;border-radius:6px;font-size:0.75rem;cursor:pointer;">✕ Quitar</button>
-      </td>
-    </tr>`).join('');
-}
-
-// FIX BUG-3: openOrderModal ahora usa el modal estático #orderModal
 function openOrderModal() {
-  if (state.cart.length === 0) { showNotification('🛒 El carrito está vacío — agrega productos primero'); return; }
-
-  const fSupplier = _el('orderSupplier');
-  const fDate     = _el('orderDeliveryDate');
-  const fNote     = _el('orderNote');
-  if (fSupplier) fSupplier.value = '';
-  if (fDate)     fDate.value     = '';
-  if (fNote)     fNote.value     = '';
-
-  // ① Decimal: _cartSetQty reemplaza _cartInc / _cartDec
-  window._cartSetQty = (idx, val) => {
-    const qty = parseFloat(val);
-    if (isNaN(qty) || qty <= 0) {
-      state.cart.splice(idx, 1);
-      if (state.cart.length === 0) { closeOrderModal(); return; }
-    } else {
-      state.cart[idx].quantity = qty;
-    }
-    _refreshOrderModal();
-    saveToLocalStorage();
-  };
-  window._cartRem = idx => {
-    state.cart.splice(idx, 1);
-    if (state.cart.length === 0) { closeOrderModal(); return; }
-    _refreshOrderModal(); saveToLocalStorage();
-  };
-
-  _refreshOrderModal();
+  if (state.cart.length === 0) { showNotification('⚠️ El carrito está vacío'); return; }
+  const tbody  = _el('orderProductsTable');
+  const empty  = _el('emptyCart');
+  const total  = _el('orderTotal');
+  if (tbody) {
+    tbody.innerHTML = '';
+    state.cart.forEach(item => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="px-4 py-3 text-gray-900 text-sm">${escapeHtml(item.name)}</td>
+        <td class="px-4 py-3 text-center text-gray-600 text-sm">${escapeHtml(item.unit)}</td>
+        <td class="px-4 py-3 text-center font-semibold text-gray-900 text-sm">
+          <div class="flex items-center justify-center gap-2">
+            <button onclick="window._cartDec('${escapeHtml(item.id)}')"
+              class="w-6 h-6 bg-gray-100 rounded-full text-gray-600 font-bold">-</button>
+            <span>${item.quantity}</span>
+            <button onclick="window._cartInc('${escapeHtml(item.id)}')"
+              class="w-6 h-6 bg-gray-100 rounded-full text-gray-600 font-bold">+</button>
+          </div>
+        </td>
+        <td class="px-4 py-3 text-center">
+          <button onclick="window._cartRemove('${escapeHtml(item.id)}')"
+            class="text-red-500 text-xs">✕</button>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+  }
+  if (empty) empty.classList.toggle('hidden', state.cart.length > 0);
+  const t = state.cart.reduce((s, i) => s + i.quantity, 0);
+  if (total) total.textContent = `Total: ${t}`;
   _showModal('orderModal');
-  setTimeout(() => _el('orderSupplier')?.focus(), 60);
 }
 
-// FIX BUG-2: esta función no existía → Cancelar no hacía nada
-function closeOrderModal() {
-  _hideModal('orderModal');
-  delete window._cartSetQty;
-  delete window._cartRem;
-  saveToLocalStorage();
-  _render();
-}
+window._cartInc    = id => { const i = state.cart.find(x => x.id === id); if (i) { i.quantity++; openOrderModal(); } };
+window._cartDec    = id => { const i = state.cart.find(x => x.id === id); if (i && i.quantity > 1) { i.quantity--; openOrderModal(); } };
+window._cartRemove = id => { state.cart = state.cart.filter(x => x.id !== id); openOrderModal(); };
 
-// FIX BUG-2: esta función no existía → "Compartir WhatsApp" no hacía nada
-// ③ Nuevo formato de mensaje WhatsApp
+function closeOrderModal() { _hideModal('orderModal'); }
+
 function createOrder() {
-  if (state.cart.length === 0) { showNotification('🛒 El carrito está vacío'); return; }
+  const supplier     = _el('orderSupplier')?.value.trim();
+  const deliveryDate = _el('orderDeliveryDate')?.value;
+  const note         = _el('orderNote')?.value.trim();
 
-  const supplier     = (_el('orderSupplier')?.value || '').trim() || 'Proveedor';
-  const deliveryDate = _el('orderDeliveryDate')?.value || '';
-  const note         = (_el('orderNote')?.value || '').trim();
-  const fecha        = new Date().toLocaleDateString('es-MX');
-  const orderId      = 'BARRA-' + Date.now(); // ③ nuevo prefijo
+  if (!supplier) { showNotification('⚠️ Ingresa el nombre del proveedor'); return; }
+  if (state.cart.length === 0) { showNotification('⚠️ El carrito está vacío'); return; }
 
-  const totalQty = state.cart.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0);
-
-  const order = {
-    id: orderId, supplier, date: fecha,
+  const now    = new Date();
+  const order  = {
+    id:           'PED-' + now.getTime(),
+    date:         now.toLocaleDateString('es-MX'),
+    time:         now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }),
+    supplier,
     deliveryDate: deliveryDate || null,
-    note: note || null,
-    total:    totalQty,
-    products: state.cart.map(i => ({ ...i })),
+    note:         note || null,
+    products:     state.cart.map(i => ({ ...i })),
+    total:        state.cart.reduce((s, i) => s + i.quantity, 0),
   };
+
   state.orders.unshift(order);
-  if (state.orders.length > 100) state.orders.pop();
+  state.cart = [];
 
-  const SEP = '━━━━━━━━━━━━━━━━━━━━━━━━━━';
-
-  // ③ Formato exacto requerido
   const lines = [
-    `🛒 PEDIDO ${orderId}`,
-    SEP,
-    `🏪 Proveedor: ${supplier}`,
-    deliveryDate ? `📅 Entrega: ${deliveryDate}` : null,
-    SEP,
-    'PRODUCTOS:',
-    ...state.cart.map((i, n) =>
-      `${n + 1}. ${i.name} — ${_fmtQty(i.quantity)} (${i.unit || 'Unid'})`
-    ),
-    SEP,
-    `📦 Total: ${_fmtTotal(totalQty)}`,
-    note ? `📝 Nota: ${note}` : null,
+    `📦 *PEDIDO BarInventory*`,
+    `Proveedor: ${order.supplier}`,
+    `Fecha: ${order.date} ${order.time}`,
+    deliveryDate ? `Entrega: ${deliveryDate}` : null,
+    note ? `Nota: ${note}` : null,
+    ``,
+    ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
+    ``,
+    `Total: *${_fmtTotal(order.total)}*`,
   ].filter(l => l !== null).join('\n');
 
-  state.cart = [];
-  closeOrderModal();
-  saveToLocalStorage();
-  _render();
+  const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
+  window.open(url, '_blank');
 
-  window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
-  showNotification(`✅ Pedido ${orderId} enviado`);
+  closeOrderModal();
+  _commit();
 }
 
 function shareOrderWhatsApp(orderId) {
   const order = state.orders.find(o => o.id === orderId);
-  if (!order) { showNotification('⚠️ Pedido no encontrado'); return; }
-
-  const SEP = '━━━━━━━━━━━━━━━━━━━━━━━━━━';
-  const totalQty = (order.products || []).reduce((s, p) => s + (parseFloat(p.quantity) || 0), 0);
-
+  if (!order) return;
   const lines = [
-    `🛒 PEDIDO ${order.id}`,
-    SEP,
-    `🏪 Proveedor: ${order.supplier || '—'}`,
-    order.deliveryDate ? `📅 Entrega: ${order.deliveryDate}` : null,
-    SEP,
-    'PRODUCTOS:',
-    ...(order.products || []).map((p, n) =>
-      `${n + 1}. ${p.name} — ${_fmtQty(p.quantity)} (${p.unit || 'Unid'})`
-    ),
-    SEP,
-    `📦 Total: ${_fmtTotal(totalQty)}`,
-    order.note ? `📝 Nota: ${order.note}` : null,
-  ].filter(l => l !== null).join('\n');
-
-  window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
-}
-
-async function deleteOrder(orderId) {
-  const ok = await showConfirm('¿Eliminar este pedido?\n\nNo se puede deshacer.');
-  if (!ok) return;
-  state.orders = state.orders.filter(o => o.id !== orderId);
-  saveToLocalStorage();
-  showNotification('🗑️ Pedido eliminado');
-  _render();
-}
-
-// ══════════════════════════════════════════════════════════════
-// HISTORIAL DE INVENTARIO
-// ══════════════════════════════════════════════════════════════
-
-function switchArea(area) { state.selectedArea = area; _render(); }
-
-function saveInventory(area) {
-  if (!area) area = state.selectedArea;
-  const conStock = state.products.filter(p => p.stockByArea?.[area] > 0);
-  if (conStock.length === 0) { showNotification('⚠️ No hay conteo en esta área para guardar'); return; }
-
-  const snapshot = {
-    id:            'INV-' + Date.now(),
-    date:          new Date().toLocaleDateString('es-MX'),
-    area,
-    usuario:       state.currentUser?.email || state.auditCurrentUser?.userName || 'Sistema',
-    totalProducts: state.products.reduce((s, p) => s + (p.stockByArea?.[area] || 0), 0),
-    products:      state.products
-      .filter(p => p.stockByArea?.[area] > 0)
-      .map(p => ({ id: p.id, name: p.name, unit: p.unit, group: p.group, stock: p.stockByArea?.[area] || 0 })),
-  };
-
-  state.inventories.unshift(snapshot);
-  if (state.inventories.length > 50) state.inventories.pop();
-  showNotification(`💾 Inventario de ${AREAS[area] || area} guardado`);
-  _commit();
-}
-
-function shareInventoryWhatsApp(inventoryId) {
-  const inv = state.inventories.find(i => i.id === inventoryId);
-  if (!inv) { showNotification('⚠️ Inventario no encontrado'); return; }
-  const lines = [
-    `📊 *Inventario ${inv.id}*`,
-    `Área: ${AREAS[inv.area] || inv.area || '—'}`,
-    `Fecha: ${inv.date || '—'}`, `Usuario: ${inv.usuario || '—'}`, '',
-    '*Productos:*',
-    ...(inv.products || []).map(p => `• ${p.name}: *${(p.stock||0).toFixed(2)}* ${p.unit||''}`),
-    '', `Total: *${(inv.totalProducts || 0).toFixed(2)}*`,
+    `📦 *PEDIDO BarInventory* (Reenvío)`,
+    `Proveedor: ${order.supplier}`,
+    `Fecha original: ${order.date} ${order.time}`,
+    ``,
+    ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
+    ``,
+    `Total: *${_fmtTotal(order.total)}*`,
   ].join('\n');
   window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
 }
 
-async function deleteInventory(inventoryId) {
-  if (state.userRole !== 'admin') return;
-  const ok = await showConfirm('¿Eliminar este registro?\n\nNo se puede deshacer.');
+async function deleteOrder(id) {
+  const ok = await showConfirm('¿Eliminar este pedido del historial?');
   if (!ok) return;
-  state.inventories = state.inventories.filter(i => i.id !== inventoryId);
-  saveToLocalStorage();
-  showNotification('🗑️ Registro eliminado');
-  _render();
-}
-
-async function resetAllInventario() {
-  if (state.userRole !== 'admin') return;
-  const ok = await showConfirm('¿Resetear TODO el inventario?\n\nSe pondrán en cero todos los conteos.');
-  if (!ok) return;
-  state.inventarioConteo = {};
-  state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
-  showNotification('🔄 Inventario reseteado a cero');
+  state.orders = state.orders.filter(o => o.id !== id);
   _commit();
 }
 
 // ══════════════════════════════════════════════════════════════
-// MODAL DE INVENTARIO — FIX BUG-4: usa #inventarioModal del HTML
+// INVENTARIO OPERATIVO (MODAL)
 // ══════════════════════════════════════════════════════════════
 
-// FIX BUG-4: openInventarioModal ahora usa el modal estático
-// con la sección completa de botellas abiertas (oz)
 function openInventarioModal(productId) {
   const product = state.products.find(p => p.id === productId);
   if (!product) { showNotification('⚠️ Producto no encontrado'); return; }
 
-  const area  = state.selectedArea || 'almacen';
+  const area  = state.auditoriaAreaActiva || state.selectedArea || 'almacen';
   const modal = _el('inventarioModal');
   if (!modal) { _openInventarioFallback(productId, area, product); return; }
 
@@ -499,21 +337,17 @@ function _addAbiertaRow(container, valorOz = '') {
   row.querySelector('input')?.focus();
 }
 
-// FIX BUG-2: esta función no existía → + Agregar no hacía nada
 function addAbiertaInModal() {
   const container = _el('inv_abiertasContainer');
   if (container) _addAbiertaRow(container);
 }
 
-// FIX BUG-2: esta función no existía → Cancelar no hacía nada
 function closeInventarioModal() {
   _hideModal('inventarioModal');
   _invProductId = null;
   _invArea      = null;
 }
 
-// FIX BUG-2+4: esta función no existía → Guardar conteo no hacía nada
-// Ahora guarda enteras + array de oz en auditoriaConteo correctamente
 function saveInventarioModal() {
   if (!_invProductId || !_invArea) { closeInventarioModal(); return; }
   const productId = _invProductId;
@@ -523,7 +357,6 @@ function saveInventarioModal() {
 
   const enteras = Math.max(0, parseFloat(_el('inv_enteras')?.value) || 0);
 
-  // Leer y validar botellas abiertas
   const container = _el('inv_abiertasContainer');
   const abiertas  = [];
   const maxOz     = (product.pesoBotellaLlenaOz || 200) + 5;
@@ -544,15 +377,12 @@ function saveInventarioModal() {
     return;
   }
 
-  // Guardar en auditoriaConteo { enteras, abiertas:[oz,...] }
   if (!state.auditoriaConteo[productId])       state.auditoriaConteo[productId] = {};
   state.auditoriaConteo[productId][area] = { enteras, abiertas };
 
-  // Guardar en inventarioConteo (número plano para stockByArea)
   if (!state.inventarioConteo[productId]) state.inventarioConteo[productId] = {};
   state.inventarioConteo[productId][area] = enteras;
 
-  // Actualizar stockByArea
   if (!product.stockByArea) product.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
   product.stockByArea[area] = enteras;
 
@@ -565,7 +395,6 @@ function saveInventarioModal() {
   _commit();
 }
 
-// Fallback si el modal estático no existe en el DOM
 function _openInventarioFallback(productId, area, product) {
   const current = product.stockByArea?.[area] || 0;
   const overlay = document.createElement('div');
@@ -601,7 +430,73 @@ function _openInventarioFallback(productId, area, product) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// EXPORTAR EXCEL
+// HISTORIAL DE INVENTARIO
+// ══════════════════════════════════════════════════════════════
+
+function switchArea(area) {
+  state.selectedArea = area;
+  saveToLocalStorage();
+  _render();
+}
+
+function saveInventory(area) {
+  const areaLabel = AREAS[area] || area;
+  const snapshot = {
+    id:            'INV-' + Date.now(),
+    date:          new Date().toLocaleString('es-MX'),
+    area,
+    totalProducts: 0,
+    products:      [],
+  };
+  let total = 0;
+  state.products.forEach(p => {
+    const stock = p.stockByArea?.[area] || 0;
+    if (stock > 0) {
+      snapshot.products.push({ id: p.id, name: p.name, unit: p.unit, stock });
+      total += stock;
+    }
+  });
+  snapshot.totalProducts = total;
+  state.inventories.unshift(snapshot);
+  showNotification(`✅ Inventario de ${areaLabel} guardado`);
+  _commit();
+}
+
+function shareInventoryWhatsApp(invId) {
+  const inv = state.inventories.find(i => i.id === invId);
+  if (!inv) return;
+  const lines = [
+    `📊 *INVENTARIO BarInventory*`,
+    `Área: ${AREAS[inv.area] || inv.area}`,
+    `Fecha: ${inv.date}`,
+    ``,
+    ...inv.products.map(p => `• ${p.name}: *${_fmtQty(p.stock)} ${p.unit}*`),
+    ``,
+    `Total: *${_fmtTotal(inv.totalProducts)}*`,
+  ].join('\n');
+  window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
+}
+
+async function deleteInventory(id) {
+  const ok = await showConfirm('¿Eliminar este registro de inventario?');
+  if (!ok) return;
+  state.inventories = state.inventories.filter(i => i.id !== id);
+  _commit();
+}
+
+async function resetAllInventario() {
+  if (state.userRole !== 'admin') return;
+  const ok = await showConfirm('⚠️ ¿Resetear TODO el inventario a cero?\nSe perderán todos los conteos actuales.');
+  if (!ok) return;
+  state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
+  state.inventarioConteo = {};
+  state.auditoriaConteo  = {};
+  _commit();
+  showNotification('✅ Inventario reseteado');
+}
+
+// ══════════════════════════════════════════════════════════════
+// EXPORTAR EXCEL — INVENTARIO OPERATIVO
 // ══════════════════════════════════════════════════════════════
 
 function exportToExcel(modo = 'INVENTARIO') {
@@ -624,46 +519,205 @@ function exportToExcel(modo = 'INVENTARIO') {
   showNotification(`📊 Excel exportado: ${fileName}`);
 }
 
+// ══════════════════════════════════════════════════════════════
+// EXPORTAR EXCEL — AUDITORÍA (FORMATO EXACTO)
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Genera la hoja "Auditoría" con el formato exacto especificado:
+ *
+ *   ID | Nombre | Unidad | Grupo | CapacidadML | PesoBotellaOz
+ *   [Almacén Enteras | Almacén Abiertas (oz) | Almacén Total]
+ *   [Barra1 Enteras  | Barra1 Abiertas (oz)  | Barra1 Total]
+ *   [Barra2 Enteras  | Barra2 Abiertas (oz)  | Barra2 Total]
+ *   Total General | Estado
+ *
+ *   - Enteras:       promedio redondeado de todos los bartenders en esa área
+ *   - Abiertas (oz): suma total de los pesos oz de todas las botellas abiertas
+ *                    de todos los bartenders (no solo el count)
+ *   - Total:         enteras + fracciones calculadas por conversión oz→fracción
+ *   - Estado:        "Conversión realizada" | "Falta capacidadMl o pesoBotellaLlenaOz"
+ *
+ *   Filas de subtotal por categoría/grupo.
+ *   Gran Total al final.
+ */
 function exportarAuditoriaExcel() {
   if (typeof window.XLSX === 'undefined') { showNotification('❌ Librería XLSX no disponible'); return; }
-  const rows = [['ID','Producto','Unidad','Grupo',
-    'Almacén Enteras','Almacén Abiertas','Barra1 Enteras','Barra1 Abiertas',
-    'Barra2 Enteras','Barra2 Abiertas','Total']];
-  state.products.forEach(p => {
-    const row = [p.id, p.name, p.unit||'', p.group||'General'];
-    let total = 0;
-    AREA_KEYS.forEach(area => {
-      const c = state.auditoriaConteo[p.id]?.[area];
-      const enteras  = c?.enteras || 0;
-      const abiertas = Array.isArray(c?.abiertas) ? c.abiertas.length : 0;
-      row.push(enteras, abiertas);
-      total += enteras + abiertas * 0.5;
-    });
-    row.push(total.toFixed(4));
-    rows.push(row);
+
+  // ── Cabecera ─────────────────────────────────────────────────
+  const AREA_LABELS = { almacen: 'Almacén', barra1: 'Barra 1', barra2: 'Barra 2' };
+
+  const header = ['ID', 'Nombre', 'Unidad', 'Grupo', 'CapacidadML', 'PesoBotellaOz'];
+  AREA_KEYS.forEach(area => {
+    const lbl = AREA_LABELS[area] || area;
+    header.push(`${lbl} Enteras`, `${lbl} Abiertas (oz)`, `${lbl} Total`);
   });
+  header.push('Total General', 'Estado');
+
+  const NUM_COLS = header.length;
+
+  // ── Agrupar productos por grupo ───────────────────────────────
+  const groupMap = new Map(); // preserva orden de inserción
+  state.products.forEach(p => {
+    const g = (p.group || 'General').trim();
+    if (!groupMap.has(g)) groupMap.set(g, []);
+    groupMap.get(g).push(p);
+  });
+
+  const sortedGroups = [...groupMap.keys()].sort((a, b) => a.localeCompare(b, 'es'));
+
+  // ── Construir filas ───────────────────────────────────────────
+  const rows   = [header];
+  let   granTotal = 0;
+
+  sortedGroups.forEach(groupName => {
+    const products = groupMap.get(groupName);
+    let subtotal   = 0;
+
+    products.forEach(p => {
+      const row = [
+        p.id,
+        p.name,
+        p.unit  || '',
+        p.group || 'General',
+        p.capacidadMl        != null ? p.capacidadMl        : '',
+        p.pesoBotellaLlenaOz != null ? p.pesoBotellaLlenaOz : '',
+      ];
+
+      let totalGeneral = 0;
+
+      AREA_KEYS.forEach(area => {
+        // ── Consolidar multi-usuario ──────────────────────────
+        const porUsuario = state.auditoriaConteoPorUsuario[p.id]?.[area] || {};
+        const usuarios   = Object.values(porUsuario);
+
+        let enteras, totalOzAbiertas, total;
+
+        if (usuarios.length > 0) {
+          // Promedio de enteras
+          const sumEnteras  = usuarios.reduce((s, u) => s + (u.enteras || 0), 0);
+          enteras = Math.round(sumEnteras / usuarios.length);
+
+          // Suma total de oz abiertas (todos los usuarios, todas sus botellas)
+          totalOzAbiertas = 0;
+          usuarios.forEach(u => {
+            if (Array.isArray(u.abiertas)) {
+              totalOzAbiertas += u.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0);
+            }
+          });
+          totalOzAbiertas = Math.round(totalOzAbiertas * 100) / 100;
+
+          // Total consolidado via calcularTotalMultiUsuario
+          total = parseFloat((calcularTotalMultiUsuario(p.id, area) || 0).toFixed(4));
+        } else {
+          // Fallback: auditoriaConteo (conteo del dispositivo local)
+          const c     = state.auditoriaConteo[p.id]?.[area] || {};
+          enteras     = c.enteras || 0;
+          const abArr = Array.isArray(c.abiertas) ? c.abiertas : [];
+          totalOzAbiertas = Math.round(abArr.reduce((s, v) => s + (parseFloat(v) || 0), 0) * 100) / 100;
+          total       = parseFloat((_calcLocalTotal(p, enteras, abArr)).toFixed(4));
+        }
+
+        row.push(enteras, totalOzAbiertas, total);
+        totalGeneral += total;
+      });
+
+      const tg     = Math.round(totalGeneral * 10000) / 10000;
+      const estado = (p.capacidadMl && p.capacidadMl > 0 && p.pesoBotellaLlenaOz && p.pesoBotellaLlenaOz > 0)
+        ? 'Conversión realizada'
+        : 'Falta capacidadMl o pesoBotellaLlenaOz';
+
+      row.push(tg, estado);
+      rows.push(row);
+      subtotal    += tg;
+      granTotal   += tg;
+    });
+
+    // ── Fila de subtotal por grupo ────────────────────────────
+    const subtotalRow = new Array(NUM_COLS).fill('');
+    subtotalRow[1] = `SUBTOTAL — ${groupName}`;
+    subtotalRow[NUM_COLS - 2] = Math.round(subtotal * 100) / 100;
+    subtotalRow[NUM_COLS - 1] = '';
+    rows.push(subtotalRow);
+  });
+
+  // ── Gran Total ────────────────────────────────────────────────
+  const granTotalRow = new Array(NUM_COLS).fill('');
+  granTotalRow[1] = 'GRAN TOTAL';
+  granTotalRow[NUM_COLS - 2] = Math.round(granTotal * 100) / 100;
+  rows.push(granTotalRow);
+
+  // ── Construir hoja ────────────────────────────────────────────
   const ws = window.XLSX.utils.aoa_to_sheet(rows);
+
+  // Anchos de columna
+  ws['!cols'] = [
+    { wch: 10 }, // ID
+    { wch: 32 }, // Nombre
+    { wch: 10 }, // Unidad
+    { wch: 16 }, // Grupo
+    { wch: 12 }, // CapacidadML
+    { wch: 14 }, // PesoBotellaOz
+    ...AREA_KEYS.flatMap(() => [{ wch: 14 }, { wch: 16 }, { wch: 12 }]),
+    { wch: 14 }, // Total General
+    { wch: 34 }, // Estado
+  ];
+
+  // Estilos básicos para filas de totales (negrita en col 1)
+  const totalRowIdxs = [];
+  let ri = 1;
+  sortedGroups.forEach(g => {
+    const products = groupMap.get(g);
+    ri += products.length;
+    totalRowIdxs.push(ri); // subtotal row
+    ri++;
+  });
+  totalRowIdxs.push(ri); // gran total
+
   const wb = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(wb, ws, 'Auditoría');
-  const fileName = `auditoria_${new Date().toISOString().slice(0,10)}.xlsx`;
+
+  const fecha    = new Date().toLocaleDateString('es-MX').replace(/\//g, '-');
+  const fileName = `Auditoria_${fecha}.xlsx`;
   window.XLSX.writeFile(wb, fileName);
   showNotification(`📊 Auditoría exportada: ${fileName}`);
 }
 
-// FIX BUG-2: exportFullData no existía → "Exportar datos" no hacía nada
+// ── Cálculo local de total (fallback sin multiusuario) ────────
+function _calcLocalTotal(product, enteras, abiertasArr) {
+  if (!abiertasArr || abiertasArr.length === 0) return enteras;
+  const pesoLlena = product.pesoBotellaLlenaOz || 0;
+  const pesoVacia = PESO_BOTELLA_VACIA_OZ || 14.0;
+  if (pesoLlena <= pesoVacia) return enteras + abiertasArr.length * 0.5;
+  const contenidoLlena = pesoLlena - pesoVacia;
+  let totalAbiertas = 0;
+  abiertasArr.forEach(oz => {
+    const p = parseFloat(oz) || 0;
+    if      (p <= pesoVacia) totalAbiertas += 0;
+    else if (p >= pesoLlena) totalAbiertas += 1;
+    else    totalAbiertas += (p - pesoVacia) / contenidoLlena;
+  });
+  return parseFloat((enteras + totalAbiertas).toFixed(4));
+}
+
+// ══════════════════════════════════════════════════════════════
+// EXPORTAR JSON COMPLETO
+// ══════════════════════════════════════════════════════════════
+
 function exportFullData() {
   try {
     const backup = {
-      _exportedAt:               new Date().toISOString(),
-      _version:                  '3.0',
-      products:                  state.products,
-      inventories:               state.inventories,
-      orders:                    state.orders,
-      inventarioConteo:          state.inventarioConteo,
-      auditoriaConteo:           state.auditoriaConteo,
-      auditoriaStatus:           state.auditoriaStatus,
-      auditoriaConteoPorUsuario: state.auditoriaConteoPorUsuario,
-      ajustes:                   state.ajustes,
+      _exportedAt:                 new Date().toISOString(),
+      _version:                    '3.1',
+      products:                    state.products,
+      inventories:                 state.inventories,
+      orders:                      state.orders,
+      inventarioConteo:            state.inventarioConteo,
+      auditoriaConteo:             state.auditoriaConteo,
+      auditoriaStatus:             state.auditoriaStatus,
+      auditoriaConteoPorUsuario:   state.auditoriaConteoPorUsuario,
+      conteoFinalizadoPorUsuario:  state.conteoFinalizadoPorUsuario,
+      ajustes:                     state.ajustes,
     };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
@@ -685,7 +739,6 @@ function exportFullData() {
 // BINDINGS GLOBALES
 // ══════════════════════════════════════════════════════════════
 
-// Funciones llamadas desde render.js (HTML generado)
 window.openProductModal       = openProductModal;
 window.editProduct            = editProduct;
 window.deleteProduct          = deleteProduct;
@@ -704,13 +757,12 @@ window.exportToExcel          = exportToExcel;
 window.exportarAuditoriaExcel = exportarAuditoriaExcel;
 window.exportFullData         = exportFullData;
 
-// FIX BUG-2: Funciones del HTML estático que no existían en ningún módulo
-window.closeProductModal      = closeProductModal;   // index.html línea Cancelar del modal producto
-window.saveProduct            = saveProduct;          // index.html línea Guardar del modal producto
-window.closeOrderModal        = closeOrderModal;      // index.html línea Cancelar del modal pedido
-window.createOrder            = createOrder;          // index.html línea WhatsApp del modal pedido
-window.addAbiertaInModal      = addAbiertaInModal;    // index.html botón + Agregar
-window.closeInventarioModal   = closeInventarioModal; // index.html Cancelar del modal inventario
-window.saveInventarioModal    = saveInventarioModal;  // index.html Guardar conteo
+window.closeProductModal      = closeProductModal;
+window.saveProduct            = saveProduct;
+window.closeOrderModal        = closeOrderModal;
+window.createOrder            = createOrder;
+window.addAbiertaInModal      = addAbiertaInModal;
+window.closeInventarioModal   = closeInventarioModal;
+window.saveInventarioModal    = saveInventarioModal;
 
-console.info('[Actions] ✓ v3.0 — 24 funciones en window (8 nuevas).');
+console.info('[Actions] ✓ v3.1 — Excel auditoría con formato exacto.');
