@@ -365,6 +365,16 @@ function _applyUserConteoData(area, areaData) {
             console.debug(`[Snapshot][multiUser] Conteo de ${uid} para ${p.id}/${area}`);
         });
     });
+
+    // Propagar estado de bloqueo (_finalizados) al state local en tiempo real.
+    // Sin esto el admin solo ve los locks del bartender que tiene en localStorage,
+    // no los de otros dispositivos. Con esto el panel de usuarios se actualiza
+    // automáticamente cuando un bartender finaliza su conteo.
+    if (areaData._finalizados && typeof areaData._finalizados === 'object') {
+        import('./audit.js')
+            .then(m => { if (m.applyLockStatusFromSnapshot) m.applyLockStatusFromSnapshot(area, areaData); })
+            .catch(() => {});
+    }
 }
 
 async function _persistCloudUpdate(cloudTs) {
