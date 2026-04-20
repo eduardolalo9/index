@@ -276,8 +276,12 @@ async function _applyMainDocData(data) {
 
     if (Array.isArray(data.products))  state.products        = data.products;
     if (Array.isArray(data.cart))      state.cart            = data.cart;
-    if (data.activeTab)                state.activeTab       = data.activeTab;
-    if (data.selectedArea)             state.selectedArea    = data.selectedArea;
+    // FIX BUG-7: NO aplicar activeTab ni selectedArea desde la nube.
+    // Hacerlo cambia la pestaña activa del usuario en tiempo real cuando otro
+    // dispositivo sincroniza — comportamiento no deseado y confuso.
+    // Cada dispositivo mantiene su propia navegación local.
+    // if (data.activeTab)             state.activeTab       = data.activeTab;   ← REMOVIDO
+    // if (data.selectedArea)          state.selectedArea    = data.selectedArea; ← REMOVIDO
     if (data.auditoriaConteo)          state.auditoriaConteo = data.auditoriaConteo;
 
     // "completada always wins" — ningún dispositivo puede re-abrir una zona
@@ -365,11 +369,7 @@ function _applyUserConteoData(area, areaData) {
             console.debug(`[Snapshot][multiUser] Conteo de ${uid} para ${p.id}/${area}`);
         });
     });
-
-    // Propagar estado de bloqueo (_finalizados) al state local en tiempo real.
-    // Sin esto el admin solo ve los locks del bartender que tiene en localStorage,
-    // no los de otros dispositivos. Con esto el panel de usuarios se actualiza
-    // automáticamente cuando un bartender finaliza su conteo.
+    // FIX: Propagar locks en tiempo real al admin
     if (areaData._finalizados && typeof areaData._finalizados === 'object') {
         import('./audit.js')
             .then(m => { if (m.applyLockStatusFromSnapshot) m.applyLockStatusFromSnapshot(area, areaData); })
@@ -767,6 +767,14 @@ export async function syncToCloud(retryCount = 0) {
     if (!navigator.onLine) {
         state._cloudSyncPending = true;
         updateCloudSyncBadge('pending');
+        return;
+    }
+    // FIX BUG-15: No sincronizar mientras el rol de usuario aún no está confirmado.
+    // Si userRole es null, isAdminRole = true (null === null) y syncToCloud intentaría
+    // escribir 'products' en Firestore con permisos de usuario anónimo → 403.
+    if (state.userRole === null && window._auth?.currentUser) {
+        console.debug('[Firebase] syncToCloud diferido — rol aún no confirmado.');
+        setTimeout(() => { if (state.userRole !== null) syncToCloud().catch(() => {}); }, 1500);
         return;
     }
 

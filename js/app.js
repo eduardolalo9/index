@@ -17,7 +17,7 @@ import { loadFromLocalStorage, smartAutoSave,
 import { syncStockByAreaFromConteo, handleFileImport,
          importFullData }              from './products.js';
 import { initAuditUser }              from './audit.js';
-import { initAuth, onAuthReady }      from './auth.js';
+import { initAuth, onAuthReady, getAuthReady } from './auth.js';
 import { switchTab }                  from './render.js';
 import { updateNetworkStatus, syncToCloud,
          stopRealtimeListeners }       from './sync.js';
@@ -95,83 +95,122 @@ window.addEventListener('DOMContentLoaded', () => {
   // Iniciar autenticación
   initAuth();
 
-  // Esperar a que auth resuelva
-  // NOTA: onAuthReady es un live-binding al _authReady de auth.js.
-  // Gracias al FIX BUG-1, en el primer login se resuelve sobre
-  // la Promise original (P1) que este .then() registró primero.
-  onAuthReady.then(user => {
-    if (!user) {
-      console.info('[App] Sin usuario — esperando login.');
-      return;
-    }
+  // ── Manejador de sesión re-entrante ─────────────────────────
+  // FIX BUG-3: onAuthReady es una Promise que solo se resuelve UNA VEZ.
+  // Después de logout + re-login, auth.js crea una nueva Promise (P2),
+  // pero el .then() registrado aquí está en P1 y no vuelve a disparar.
+  // SOLUCIÓN: usamos getAuthReady() en cada ciclo para siempre obtener
+  // la Promise actual, y encadenamos un nuevo .then() en cada login.
 
-    console.info('[App] Usuario confirmado — cargando aplicación…');
+  let _appInitialized = false; // Solo inicializar listeners globales una vez
 
-    initAuditUser();
-    loadFromLocalStorage();
-    syncStockByAreaFromConteo();
-
-    if (state.products.length === 0) {
-      console.info('[App] Primera ejecución — productos de ejemplo.');
-      state.products = INITIAL_PRODUCTS;
-      saveToLocalStorage();
-    }
-
-    switchTab(state.activeTab);
-
-    // Delegación de eventos para inputs de archivo
-    document.body.addEventListener('change', function(e) {
-      const target = e.target;
-      if (!target || target.tagName !== 'INPUT') return;
-      if (target.id === 'fileInput') { handleFileImport(e); return; }
-      if (target.id === 'importDataInput') { importFullData(e); return; }
-    });
-
-    // Red online/offline
-    window.addEventListener('online', updateNetworkStatus);
-    window.addEventListener('offline', updateNetworkStatus);
-    updateNetworkStatus();
-
-    window.addEventListener('online', () => {
-      if (state.adjustmentsPending?.length > 0) {
-        import('./ajustes.js').then(m => m.subirAjustesPendientes()).catch(() => {});
+  function _waitForUser() {
+    getAuthReady().then(user => {
+      if (!user) {
+        console.info('[App] Sin usuario — esperando login.');
+        // Esperar el próximo ciclo de login
+        _listenForNextLogin();
+        return;
       }
-    });
 
-    // Auto-guardado cada 30s
-    setInterval(smartAutoSave, AUTO_SAVE_INTERVAL_MS);
+      console.info('[App] Usuario confirmado — cargando aplicación…');
 
-    // Sync de recuperación cada 3 min
-    setInterval(() => {
-      if (navigator.onLine && window._db &&
-          state._cloudSyncPending && !state._syncInProgress) {
-        console.info('[App] Sync de recuperación…');
-        syncToCloud().catch(e => console.warn('[App] Sync periódico falló:', e));
+      initAuditUser();
+      loadFromLocalStorage();
+      syncStockByAreaFromConteo();
+
+      // Solo cargar productos de ejemplo en primera ejecución real
+      // FIX BUG-13: verificar también si hay datos en cloud antes de cargar demo
+      if (state.products.length === 0) {
+        console.info('[App] Primera ejecución — productos de ejemplo.');
+        state.products = INITIAL_PRODUCTS;
+        saveToLocalStorage();
       }
-    }, SYNC_RECOVERY_INTERVAL_MS);
 
-    // Guard anti doble-click exportToExcel
-    let _exportingExcel = false;
-    const origExport = window.exportToExcel;
-    if (origExport) {
-      window.exportToExcel = function(modo) {
-        if (_exportingExcel) { window.showNotification?.('⏳ Exportación en proceso…'); return; }
-        _exportingExcel = true;
-        try { origExport(modo); }
-        catch (e) { window.showNotification?.('❌ Error al exportar Excel'); console.error(e); }
-        setTimeout(() => { _exportingExcel = false; }, 3000);
-      };
-    }
+      switchTab(state.activeTab);
 
-    // Label de tema en sidebar
-    const sbLabel = document.getElementById('sbThemeLabel');
-    if (sbLabel) {
-      sbLabel.textContent =
-        document.documentElement.getAttribute('data-theme') === 'dark'
-          ? 'Modo claro' : 'Modo oscuro';
-    }
+      // Inicializar listeners globales solo una vez por sesión del navegador
+      if (!_appInitialized) {
+        _appInitialized = true;
 
-    console.info('[App] ✓ Arranque completo.');
-  });
+        // Delegación de eventos para inputs de archivo
+        document.body.addEventListener('change', function(e) {
+          const target = e.target;
+          if (!target || target.tagName !== 'INPUT') return;
+          if (target.id === 'fileInput') { handleFileImport(e); return; }
+          if (target.id === 'importDataInput') { importFullData(e); return; }
+        });
+
+        // Red online/offline
+        window.addEventListener('online', updateNetworkStatus);
+        window.addEventListener('offline', updateNetworkStatus);
+
+        window.addEventListener('online', () => {
+          if (state.adjustmentsPending?.length > 0) {
+            import('./ajustes.js').then(m => m.subirAjustesPendientes()).catch(() => {});
+          }
+        });
+
+        // Auto-guardado cada 30s
+        setInterval(smartAutoSave, AUTO_SAVE_INTERVAL_MS);
+
+        // Sync de recuperación cada 3 min
+        setInterval(() => {
+          if (navigator.onLine && window._db && state.userRole !== null &&
+              state._cloudSyncPending && !state._syncInProgress) {
+            console.info('[App] Sync de recuperación…');
+            syncToCloud().catch(e => console.warn('[App] Sync periódico falló:', e));
+          }
+        }, SYNC_RECOVERY_INTERVAL_MS);
+
+        // Guard anti doble-click exportToExcel
+        let _exportingExcel = false;
+        const origExport = window.exportToExcel;
+        if (origExport) {
+          window.exportToExcel = function(modo) {
+            if (_exportingExcel) { window.showNotification?.('⏳ Exportación en proceso…'); return; }
+            _exportingExcel = true;
+            try { origExport(modo); }
+            catch (e) { window.showNotification?.('❌ Error al exportar Excel'); console.error(e); }
+            setTimeout(() => { _exportingExcel = false; }, 3000);
+          };
+        }
+
+        // Label de tema en sidebar
+        const sbLabel = document.getElementById('sbThemeLabel');
+        if (sbLabel) {
+          sbLabel.textContent =
+            document.documentElement.getAttribute('data-theme') === 'dark'
+              ? 'Modo claro' : 'Modo oscuro';
+        }
+      }
+
+      updateNetworkStatus();
+      console.info('[App] ✓ Arranque completo.');
+
+      // Después del logout, volver a escuchar el siguiente login
+      _listenForNextLogin();
+    }).catch(err => {
+      console.error('[App] Error en getAuthReady():', err);
+      _listenForNextLogin();
+    });
+  }
+
+  // Escucha el próximo ciclo de auth (re-login después de logout)
+  function _listenForNextLogin() {
+    // Verificar cada 300ms si hay una nueva Promise de auth disponible
+    // (auth.js la recrea en logout/re-login)
+    let _prevPromise = getAuthReady();
+    const _checkInterval = setInterval(() => {
+      const _current = getAuthReady();
+      if (_current !== _prevPromise) {
+        clearInterval(_checkInterval);
+        _prevPromise = _current;
+        _waitForUser();
+      }
+    }, 300);
+  }
+
+  _waitForUser();
 });
 
