@@ -37,7 +37,10 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     // FIX BUG-5: './sw.js' relativo funciona en /index/ de GitHub Pages.
     // La ruta absoluta '/sw.js' buscaba el archivo en la raíz del dominio.
-    navigator.serviceWorker.register('./sw.js', { scope: './' })
+    window.addEventListener('beforeunload', () => {
+  stopRealtimeListeners();
+  try { saveToLocalStorage(); } catch (_) {}
+});
       .then(reg => {
         console.info('[SW] Registrado — scope:', reg.scope);
         reg.addEventListener('updatefound', () => {
@@ -121,12 +124,12 @@ window.addEventListener('DOMContentLoaded', () => {
 
       // Solo cargar productos de ejemplo en primera ejecución real
       // FIX BUG-13: verificar también si hay datos en cloud antes de cargar demo
-      if (state.products.length === 0) {
-        console.info('[App] Primera ejecución — productos de ejemplo.');
-        state.products = INITIAL_PRODUCTS;
-        saveToLocalStorage();
-      }
-
+     setInterval(() => {
+  if (navigator.onLine && window._db && state.userRole !== null &&
+      state._cloudSyncPending && !state._syncInProgress) {
+    syncToCloud()
+  }
+}, SYNC_RECOVERY_INTERVAL_MS);
       switchTab(state.activeTab);
 
       // Inicializar listeners globales solo una vez por sesión del navegador
