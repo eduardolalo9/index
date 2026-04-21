@@ -1,25 +1,59 @@
 /**
- * js/app.js — v2.1 CORREGIDO
+ * js/app.js — v2.2 CORREGIDO
  *
- * FIX BUG-5: Service Worker con ruta absoluta '/sw.js' y scope '/'
- *   falla en GitHub Pages porque el site vive en /index/, no en la
- *   raíz del dominio. El navegador rechaza el registro silenciosamente.
- *   Sin SW: sin instalación PWA, sin caché offline.
- *   En una barra sin WiFi estable esto inutiliza la app.
+ * FIX BUG-5 (v2.1): Service Worker con ruta relativa './sw.js' y scope './'
+ *   en lugar de '/sw.js' absoluta — necesario para GitHub Pages /index/.
  *
- *   CORRECCIÓN: Rutas relativas './sw.js' con scope './'
- *   funcionan en cualquier subdirectorio de GitHub Pages.
+ * FIX BUG-A (v2.2) — CRÍTICO: Bug de sintaxis en el bloque del SW.
+ * ──────────────────────────────────────────────────────────────────
+ * PROBLEMA:
+ *   El listener 'beforeunload' fue insertado accidentalmente DENTRO de
+ *   la cadena Promise del registro del SW, partiéndola en dos bloques
+ *   sin conexión. La llamada navigator.serviceWorker.register() estaba
+ *   ausente — solo existía un .then() huérfano que el parser rechazaba
+ *   silenciosamente. El SW nunca se registraba.
+ *   Consecuencia: sin Service Worker, sin modo offline real, sin
+ *   instalación PWA. En una barra con WiFi inestable la app quedaba
+ *   inoperable al caer la conexión.
+ *
+ * CORRECCIÓN:
+ *   ① Se agrega la llamada faltante:
+ *      navigator.serviceWorker.register('./sw.js', { scope: './' })
+ *   ② Se elimina el beforeunload mal ubicado dentro del bloque del SW.
+ *      El beforeunload correcto ya existe más abajo, fuera del bloque.
+ *
+ * FIX BUG-C (v2.2) — CRÍTICO: setInterval de recovery duplicado.
+ * ──────────────────────────────────────────────────────────────────
+ * PROBLEMA:
+ *   _waitForUser() tenía un setInterval de sync-recovery SUELTO,
+ *   fuera del guard if (!_appInitialized). Esto significaba que cada
+ *   vez que el usuario hacía logout + re-login se creaba un nuevo
+ *   interval acumulativo: 2 sesiones → 2 intervals, 3 sesiones → 3,
+ *   etc. Efectos: sincronizaciones dobles/triples y memory leak.
+ *   Además ese interval llamaba a syncToCloud() sin .catch(), por lo
+ *   que cualquier error de red quedaba sin manejar y podía romper la
+ *   Promise chain silenciosamente.
+ *
+ * CORRECCIÓN:
+ *   Se elimina el setInterval suelto. Solo queda el correcto, dentro
+ *   del guard if (!_appInitialized), que garantiza que se crea una
+ *   única vez por pestaña, sin importar cuántos re-logins ocurran.
  */
 
-import { initTheme } from './ui.js';
-import { loadFromLocalStorage, smartAutoSave,
+import { initTheme }                  from './ui.js';
+import { loadFromLocalStorage,
+         smartAutoSave,
          saveToLocalStorage }          from './storage.js';
-import { syncStockByAreaFromConteo, handleFileImport,
+import { syncStockByAreaFromConteo,
+         handleFileImport,
          importFullData }              from './products.js';
 import { initAuditUser }              from './audit.js';
-import { initAuth, onAuthReady, getAuthReady } from './auth.js';
+import { initAuth,
+         onAuthReady,
+         getAuthReady }               from './auth.js';
 import { switchTab }                  from './render.js';
-import { updateNetworkStatus, syncToCloud,
+import { updateNetworkStatus,
+         syncToCloud,
          stopRealtimeListeners }       from './sync.js';
 import { state }                      from './state.js';
 import { INITIAL_PRODUCTS,
@@ -35,12 +69,10 @@ console.info('[App] BarInventory arrancando…');
 // ── Service Worker ────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    // FIX BUG-5: './sw.js' relativo funciona en /index/ de GitHub Pages.
-    // La ruta absoluta '/sw.js' buscaba el archivo en la raíz del dominio.
-    window.addEventListener('beforeunload', () => {
-  stopRealtimeListeners();
-  try { saveToLocalStorage(); } catch (_) {}
-});
+    // FIX BUG-5: Ruta relativa './sw.js' — funciona en /index/ de GitHub Pages.
+    // FIX BUG-A: Se agrega register() que faltaba y se elimina el beforeunload
+    //            que estaba mal ubicado aquí (el correcto ya existe más abajo).
+    navigator.serviceWorker.register('./sw.js', { scope: './' })
       .then(reg => {
         console.info('[SW] Registrado — scope:', reg.scope);
         reg.addEventListener('updatefound', () => {
@@ -99,7 +131,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initAuth();
 
   // ── Manejador de sesión re-entrante ─────────────────────────
-  // FIX BUG-3: onAuthReady es una Promise que solo se resuelve UNA VEZ.
+  // FIX BUG-3 (v2.1): onAuthReady es una Promise que solo se resuelve UNA VEZ.
   // Después de logout + re-login, auth.js crea una nueva Promise (P2),
   // pero el .then() registrado aquí está en P1 y no vuelve a disparar.
   // SOLUCIÓN: usamos getAuthReady() en cada ciclo para siempre obtener
@@ -122,14 +154,11 @@ window.addEventListener('DOMContentLoaded', () => {
       loadFromLocalStorage();
       syncStockByAreaFromConteo();
 
-      // Solo cargar productos de ejemplo en primera ejecución real
-      // FIX BUG-13: verificar también si hay datos en cloud antes de cargar demo
-     setInterval(() => {
-  if (navigator.onLine && window._db && state.userRole !== null &&
-      state._cloudSyncPending && !state._syncInProgress) {
-    syncToCloud()
-  }
-}, SYNC_RECOVERY_INTERVAL_MS);
+      // FIX BUG-C: El setInterval de recovery que existía aquí fue eliminado.
+      // Era un interval suelto fuera del guard _appInitialized que se duplicaba
+      // en cada re-login (logout + login acumulaba múltiples intervals).
+      // El único interval correcto está dentro del guard if (!_appInitialized).
+
       switchTab(state.activeTab);
 
       // Inicializar listeners globales solo una vez por sesión del navegador
@@ -140,12 +169,12 @@ window.addEventListener('DOMContentLoaded', () => {
         document.body.addEventListener('change', function(e) {
           const target = e.target;
           if (!target || target.tagName !== 'INPUT') return;
-          if (target.id === 'fileInput') { handleFileImport(e); return; }
-          if (target.id === 'importDataInput') { importFullData(e); return; }
+          if (target.id === 'fileInput')       { handleFileImport(e); return; }
+          if (target.id === 'importDataInput') { importFullData(e);   return; }
         });
 
         // Red online/offline
-        window.addEventListener('online', updateNetworkStatus);
+        window.addEventListener('online',  updateNetworkStatus);
         window.addEventListener('offline', updateNetworkStatus);
 
         window.addEventListener('online', () => {
@@ -157,7 +186,7 @@ window.addEventListener('DOMContentLoaded', () => {
         // Auto-guardado cada 30s
         setInterval(smartAutoSave, AUTO_SAVE_INTERVAL_MS);
 
-        // Sync de recuperación cada 3 min
+        // Sync de recuperación cada 3 min — ÚNICO interval, creado una sola vez
         setInterval(() => {
           if (navigator.onLine && window._db && state.userRole !== null &&
               state._cloudSyncPending && !state._syncInProgress) {
@@ -216,4 +245,3 @@ window.addEventListener('DOMContentLoaded', () => {
 
   _waitForUser();
 });
-
