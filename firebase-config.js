@@ -31,15 +31,15 @@ window._firebaseReady = false;
     'use strict';
 
   const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDugu23uEgacqMUTsoBF8i7xfyDIDbiv0M",
-  authDomain: "bar-inventario-1109e.firebaseapp.com",
-  databaseURL: "https://bar-inventario-1109e-default-rtdb.firebaseio.com",
-  projectId: "bar-inventario-1109e",
-  storageBucket: "bar-inventario-1109e.firebasestorage.app",
-  messagingSenderId: "450765028668",
-  appId: "1:450765028668:web:54fdb19714d374ff02b239"
+ apiKey: "AIzaSyCMJ-9WlolgOPspANRMmIaleVUnlKEtm70",
+  authDomain: "barinventario-3894f.firebaseapp.com",
+  databaseURL: "https://barinventario-3894f-default-rtdb.firebaseio.com",
+  projectId: "barinventario-3894f",
+  storageBucket: "barinventario-3894f.firebasestorage.app",
+  messagingSenderId: "389047662094",
+  appId: "1:389047662094:web:137db000639582f7382e5f",
+  measurementId: "G-GWZSFS7JRY"
 };
-
     // Verificar que la config no tiene valores de placeholder
     const configured = Object.values(FIREBASE_CONFIG).every(
         v => typeof v === 'string' && v.length > 0 && !v.startsWith('REEMPLAZA')
