@@ -1,6 +1,13 @@
 /**
- * js/actions.js — v3.1
+ * js/actions.js — v3.2
  * ══════════════════════════════════════════════════════════════
+ * NUEVO v3.2:
+ *   Cantidad de pedido con decimales (step 0.001):
+ *   - Input numérico reemplaza al <span> en openOrderModal()
+ *   - _cartSetQty() permite editar la cantidad directamente en el campo
+ *   - _cartInc / _cartDec mantienen precisión de 3 decimales
+ *   - _fmtQty() ya formateaba decimales correctamente (sin cambios)
+ *
  * NUEVO v3.1:
  *   exportarAuditoriaExcel() — Formato EXACTO según especificación:
  *     Hoja "Auditoría"
@@ -187,7 +194,11 @@ function openOrderModal() {
           <div class="flex items-center justify-center gap-2">
             <button onclick="window._cartDec('${escapeHtml(item.id)}')"
               class="w-6 h-6 bg-gray-100 rounded-full text-gray-600 font-bold">-</button>
-            <span>${item.quantity}</span>
+            <input type="number" min="0.001" step="0.001"
+              value="${_fmtQty(item.quantity)}"
+              data-cart-id="${escapeHtml(item.id)}"
+              onchange="window._cartSetQty(this.dataset.cartId, this.value)"
+              style="width:64px;text-align:center;border:1px solid #d1d5db;border-radius:6px;padding:2px 4px;font-size:0.85rem;font-weight:600;color:#111827;background:#fff;">
             <button onclick="window._cartInc('${escapeHtml(item.id)}')"
               class="w-6 h-6 bg-gray-100 rounded-full text-gray-600 font-bold">+</button>
           </div>
@@ -205,9 +216,23 @@ function openOrderModal() {
   _showModal('orderModal');
 }
 
-window._cartInc    = id => { const i = state.cart.find(x => x.id === id); if (i) { i.quantity++; openOrderModal(); } };
-window._cartDec    = id => { const i = state.cart.find(x => x.id === id); if (i && i.quantity > 1) { i.quantity--; openOrderModal(); } };
+window._cartInc    = id => { const i = state.cart.find(x => x.id === id); if (i) { i.quantity = Math.round((i.quantity + 1) * 1000) / 1000; openOrderModal(); } };
+window._cartDec    = id => { const i = state.cart.find(x => x.id === id); if (i && i.quantity > 1) { i.quantity = Math.round((i.quantity - 1) * 1000) / 1000; openOrderModal(); } };
 window._cartRemove = id => { state.cart = state.cart.filter(x => x.id !== id); openOrderModal(); };
+window._cartSetQty = (id, val) => {
+  const i = state.cart.find(x => x.id === id);
+  if (!i) return;
+  const n = Math.round(parseFloat(val) * 1000) / 1000;
+  if (isNaN(n) || n <= 0) { openOrderModal(); return; }
+  i.quantity = n;
+  // Actualizar total sin re-renderizar la tabla completa para no perder el foco
+  const totalEl = document.getElementById('orderTotal');
+  if (totalEl) {
+    const t = state.cart.reduce((s, x) => s + x.quantity, 0);
+    totalEl.textContent = 'Total: ' + (Math.round(t * 1000) / 1000);
+  }
+  import('./storage.js').then(m => m.saveToLocalStorage()).catch(() => {});
+};
 
 function closeOrderModal() { _hideModal('orderModal'); }
 
