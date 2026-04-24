@@ -282,9 +282,9 @@ function shareOrderWhatsApp(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) return;
   const lines = [
- const SEP = '━━━━━━━━━━━━━━━━━━━━━━━━━━';
-          const totalQty = (order.products || []).reduce((s, p) => s + (parseFloat(p.quantity) || 0), 0);
-
+           const SEP = '━━━━━━━━━━━━━━━━━━━━━━━━━━';
+  const totalQty = (order.products || []).reduce((s, p) => s + (parseFloat(p.quantity) || 0), 0);
+        
     `🛒 *PEDIDO BarInventory* (Reenvío)`,
     `🏪 Proveedor: ${order.supplier}`,
     `📅 Fecha original: ${order.date} ${order.time}`,
