@@ -255,18 +255,20 @@ function createOrder() {
     products:     state.cart.map(i => ({ ...i })),
     total:        state.cart.reduce((s, i) => s + i.quantity, 0),
   };
+
   state.orders.unshift(order);
   state.cart = [];
+
   const lines = [
-    `🛒 *PEDIDO BarInventory*`,
-    `🏪 Proveedor: ${order.supplier}`,
+    `📦 *PEDIDO BarInventory*`,
+    `Proveedor: ${order.supplier}`,
     `Fecha: ${order.date} ${order.time}`,
-    deliveryDate ? `📅 Entrega: ${deliveryDate}` : null,
+    deliveryDate ? `Entrega: ${deliveryDate}` : null,
     note ? `Nota: ${note}` : null,
     ``,
     ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
     ``,
-    `📦 Total: *${_fmtTotal(order.total)}*`,
+    `Total: *${_fmtTotal(order.total)}*`,
   ].filter(l => l !== null).join('\n');
 
   const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
@@ -280,13 +282,13 @@ function shareOrderWhatsApp(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) return;
   const lines = [
-    `🛒 *PEDIDO BarInventory* (Reenvío)`,
-    `🏪 Proveedor: ${order.supplier}`,
-    `📅 Fecha original: ${order.date} ${order.time}`,
+    `📦 *PEDIDO BarInventory* (Reenvío)`,
+    `Proveedor: ${order.supplier}`,
+    `Fecha original: ${order.date} ${order.time}`,
     ``,
     ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
     ``,
-    `📦 Total: *${_fmtTotal(order.total)}*`,
+    `Total: *${_fmtTotal(order.total)}*`,
   ].join('\n');
   window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank');
 }
