@@ -260,10 +260,10 @@ function createOrder() {
   state.cart = [];
 
   const lines = [
-    `📦 *PEDIDO BarInventory*`,
+    `📦 *PEDIDO BARRA*`,
     `🏪 Proveedor: ${order.supplier}`,
     `📅 Fecha: ${order.date} ${order.time}`,
-    deliveryDate ? `Entrega: ${deliveryDate}` : null,
+    deliveryDate ? `📅 Entrega: ${deliveryDate}` : null,
     note ? `📝 Nota: ${note}` : null,
     ``,
     ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
@@ -282,7 +282,7 @@ function shareOrderWhatsApp(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) return;
   const lines = [
-    `📦 *PEDIDO BarInventory* (Reenvío)`,
+    `📦 *PEDIDO BARRA* (Reenvío)`,
     `🏪 Proveedor: ${order.supplier}`,
     `📅 Fecha original: ${order.date} ${order.time}`,
     ``,
