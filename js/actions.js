@@ -255,7 +255,6 @@ function createOrder() {
     products:     state.cart.map(i => ({ ...i })),
     total:        state.cart.reduce((s, i) => s + i.quantity, 0),
   };
-
   state.orders.unshift(order);
   state.cart = [];
   const lines = [
