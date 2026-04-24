@@ -258,7 +258,6 @@ function createOrder() {
 
   state.orders.unshift(order);
   state.cart = [];
-const SEP = '━━━━━━━━━━━━━━━━━━━━━━━━━━';
   const lines = [
     `🛒 *PEDIDO BarInventory*`,
     `🏪 Proveedor: ${order.supplier}`,
@@ -282,9 +281,6 @@ function shareOrderWhatsApp(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) return;
   const lines = [
-           const SEP = '━━━━━━━━━━━━━━━━━━━━━━━━━━';
-  const totalQty = (order.products || []).reduce((s, p) => s + (parseFloat(p.quantity) || 0), 0);
-        
     `🛒 *PEDIDO BarInventory* (Reenvío)`,
     `🏪 Proveedor: ${order.supplier}`,
     `📅 Fecha original: ${order.date} ${order.time}`,
