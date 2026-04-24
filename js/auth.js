@@ -1,5 +1,5 @@
 /**
- * js/auth.js — v3.0 DEFINITIVO
+ * js/auth.js — v3.1
  * ══════════════════════════════════════════════════════════════
  * Autenticación Firebase Email/Password con control de roles.
  *
@@ -18,16 +18,34 @@
  *     6. cb de app.js (registrado en P1) NUNCA dispara
  *     → app se queda en "Verificando sesión…" para siempre
  *
- *   La condición `if (_lastAuthUid && _lastAuthUid !== user.uid)`
- *   es FALSE en el primer login (porque _lastAuthUid era null),
- *   así que cleanupRoles() no se llamaba, PERO la recreación de
- *   _authReady en la línea siguiente SÍ ejecutaba siempre.
- *
- * CORRECCIÓN:
+ * CORRECCIÓN BUG-1:
  *   Solo recrear _authReady cuando hay CAMBIO DE USUARIO
  *   (es decir, cuando _lastAuthUid ya tenía un valor diferente).
  *   En el PRIMER LOGIN (_lastAuthUid era null), no recrear P1.
  *   app.js ya tiene .then() sobre P1 → recibirá el resolve.
+ *
+ * FIX BUG-2 (CRÍTICO — re-login post-logout nunca notificaba a app.js):
+ * ──────────────────────────────────────────────────────────────
+ * PROBLEMA:
+ *   _handleLogout() creaba una nueva Promise (P_logout) y la resolvía
+ *   INMEDIATAMENTE con null:
+ *     _authReady  = new Promise(resolve => { _authResolve = resolve; });
+ *     _authResolve(null);   ← P_logout queda resuelta en el acto
+ *
+ *   En el siguiente login, _handleLogin encontraba _lastAuthUid === null
+ *   y NO recreaba la Promise (condición correcta para el primer login).
+ *   Llamaba _authResolve(user) sobre P_logout, que ya estaba resuelta
+ *   → no-op. app.js nunca recibía el usuario → sin loadFromLocalStorage(),
+ *   sin switchTab(), sin syncStockByAreaFromConteo() en el re-login.
+ *   La UI mostraba el usuario autenticado pero la app funcionaba
+ *   como si estuviera vacía.
+ *
+ * CORRECCIÓN BUG-2:
+ *   _handleLogout() crea la nueva Promise pero NO la resuelve.
+ *   La deja pendiente para que el siguiente _handleLogin la resuelva
+ *   con el usuario real. app.js detecta el cambio de referencia
+ *   (P1 → P_logout) vía _listenForNextLogin() y espera sobre la
+ *   Promise pendiente hasta que el usuario haga login.
  *
  * Resto de correcciones (v2.2):
  * • Guard _authChangeInProgress evita eventos dobles de Firebase
@@ -42,6 +60,7 @@ const $id = id => document.getElementById(id);
 
 // ── Promise inicial — app.js hace .then() sobre esta ─────────
 // CRÍTICO: No recrear esta Promise en el primer login.
+// En logout, se recrea pero se deja PENDIENTE (no resolver con null).
 let _authResolve;
 let _authReady = new Promise(resolve => { _authResolve = resolve; });
 
@@ -128,17 +147,22 @@ async function _handleLogin(user) {
         return;
     }
 
-    // Cambio de usuario: limpiar sesión anterior Y recrear Promise
+    // Cambio de usuario (uid A → uid B): limpiar sesión anterior Y recrear Promise.
+    // Esto cubre el caso admin → otro admin o admin → usuario sin logout intermedio.
     if (_lastAuthUid !== null && _lastAuthUid !== user.uid) {
         console.info('[Auth] Cambio de usuario — limpiando sesión anterior.');
         cleanupRoles();
-        // FIX BUG-1: Solo recrear _authReady cuando hay CAMBIO DE USUARIO.
-        // En el PRIMER login (_lastAuthUid era null) NO se recrea,
-        // porque app.js ya tiene .then() sobre la Promise original (P1).
-        // Recrearla aquí rompía la cadena: app.js nunca arrancaba.
+        // Recrear Promise para el nuevo usuario.
+        // app.js detectará el cambio de referencia vía _listenForNextLogin().
         _authReady = new Promise(resolve => { _authResolve = resolve; });
     }
-    // Si _lastAuthUid === null → primer login → NO recrear → P1 sigue válida
+
+    // Si _lastAuthUid === null:
+    //   • Primer login:        _authReady es P1 (original), _authResolve apunta a resolve_P1.
+    //   • Re-login post-logout: _authReady es P_logout (creada en _handleLogout, pendiente),
+    //                           _authResolve apunta a resolve_P_logout.
+    //   En ambos casos NO recreamos — usamos la Promise pendiente que ya existe.
+    //   _authResolve(user) resolverá la Promise correcta en cualquiera de los dos casos.
 
     _lastAuthUid = user.uid;
     showAuthLoading();
@@ -184,9 +208,23 @@ function _handleLogout() {
     cleanupRoles();
     showLogin();
 
-    // Recrear Promise para el próximo login
+    // FIX BUG-2: Crear nueva Promise pendiente para el próximo login.
+    //
+    // ❌ ANTES (roto):
+    //   _authReady = new Promise(resolve => { _authResolve = resolve; });
+    //   _authResolve(null);   ← resolvía P_logout inmediatamente
+    //
+    //   Consecuencia: en el siguiente _handleLogin, _lastAuthUid era null
+    //   → no se recreaba la Promise → _authResolve(user) era un no-op
+    //   sobre P_logout ya resuelta → app.js nunca recibía el usuario.
+    //
+    // ✅ AHORA (correcto):
+    //   P_logout se deja PENDIENTE. _handleLogin la resolverá con el
+    //   usuario real en el siguiente login. app.js detecta el cambio
+    //   de referencia (P_anterior → P_logout) vía _listenForNextLogin()
+    //   y espera sobre P_logout hasta que el usuario haga login.
     _authReady = new Promise(resolve => { _authResolve = resolve; });
-    _authResolve(null);
+    // No llamar _authResolve aquí — se resuelve en el próximo _handleLogin.
 
     if (prevUid) console.info('[Auth] Sesión cerrada.');
 }
