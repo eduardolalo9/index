@@ -282,9 +282,9 @@ function shareOrderWhatsApp(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) return;
   const lines = [
-    `*PEDIDO BarInventory* (Reenvío)`,
-    `Proveedor: ${order.supplier}`,
-    `Fecha original: ${order.date} ${order.time}`,
+    `📦 *PEDIDO BarInventory* (Reenvío)`,
+    `🏪 Proveedor: ${order.supplier}`,
+    `📅 Fecha original: ${order.date} ${order.time}`,
     ``,
     ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
     ``,
