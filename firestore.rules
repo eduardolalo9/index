@@ -1,5 +1,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
-// firestore.rules — BarInventory v2.1
+// firestore.rules — BarInventory v2.2
+// Proyecto: bar-inventario-1109e
+// ══════════════════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════════════════
 //
 // CÓMO PUBLICAR (dos opciones):
@@ -171,12 +173,23 @@ service cloud.firestore {
     // /notificaciones/{notifId}
     // ══════════════════════════════════════════════════════════
     match /notificaciones/{notifId} {
-      allow read: if isUser();
 
+      // FIX Fase-2: Restricción en servidor, no solo en cliente.
+      // Admin ve todas las notificaciones del docId.
+      // Usuario solo ve las propias o broadcasts — Firestore rechaza las demás.
+      // Esto evita que usuarios descarguen notificaciones ajenas vía SDK/devtools.
+      allow read: if isAdmin()
+                  || (isUser()
+                      && (resource.data.usuarioId == request.auth.uid
+                          || resource.data.usuarioId == 'broadcast'));
+
+      // FIX Fase-2: Solo admin puede crear notificaciones de tipo 'sistema'.
+      // Usuarios pueden crear tipos operativos (ajuste, conteo, sync, reporte).
       allow create: if isUser()
                     && request.resource.data.fecha is number
                     && request.resource.data.tipo is string
-                    && request.resource.data.mensaje is string;
+                    && request.resource.data.mensaje is string
+                    && (request.resource.data.tipo != 'sistema' || isAdmin());
 
       // Solo se puede marcar como leída (campo 'leida')
       allow update: if isAdmin()

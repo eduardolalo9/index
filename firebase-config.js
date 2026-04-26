@@ -61,6 +61,7 @@ window._firebaseReady = false;
   messagingSenderId: "450765028668",
   appId: "1:450765028668:web:54fdb19714d374ff02b239"
 };
+
     // Verificar que la config no tiene valores de placeholder
     const configured = Object.values(FIREBASE_CONFIG).every(
         v => typeof v === 'string' && v.length > 0 && !v.startsWith('REEMPLAZA')
@@ -91,18 +92,30 @@ window._firebaseReady = false;
         window._db = firebase.firestore(app);
 
         // ── 4. Persistencia offline (aislada — no bloquea si falla) ──
+        // FIX Fase-2: En Firebase SDK v10+ compat, enableIndexedDbPersistence
+        // fue eliminado del API. Verificamos si existe antes de llamarlo para
+        // evitar "is not a function" en consola. Si no existe, Firestore igual
+        // funciona — solo sin caché offline en IndexedDB.
         try {
-            window._db.enableIndexedDbPersistence()
-                .then(() => console.info('[Firebase] ✓ Persistencia offline habilitada.'))
-                .catch(err => {
-                    if (err.code === 'failed-precondition') {
-                        console.warn('[Firebase] Persistencia: múltiples pestañas activas.');
-                    } else if (err.code === 'unimplemented') {
-                        console.warn('[Firebase] Persistencia no soportada en este navegador.');
-                    } else {
-                        console.warn('[Firebase] Persistencia error:', err.code);
-                    }
-                });
+            const enablePersist =
+                window._db.enableIndexedDbPersistence?.bind(window._db) ||
+                window._db.enablePersistence?.bind(window._db);
+
+            if (typeof enablePersist === 'function') {
+                enablePersist()
+                    .then(() => console.info('[Firebase] ✓ Persistencia offline habilitada.'))
+                    .catch(err => {
+                        if (err.code === 'failed-precondition') {
+                            console.warn('[Firebase] Persistencia: múltiples pestañas activas.');
+                        } else if (err.code === 'unimplemented') {
+                            console.warn('[Firebase] Persistencia no soportada en este navegador.');
+                        } else {
+                            console.warn('[Firebase] Persistencia error:', err.code);
+                        }
+                    });
+            } else {
+                console.info('[Firebase] Persistencia offline no disponible en esta versión del SDK (no crítico).');
+            }
         } catch (persistErr) {
             console.warn('[Firebase] Persistencia falló (no crítico):', persistErr.message);
         }
