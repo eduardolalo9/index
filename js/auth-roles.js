@@ -1,9 +1,13 @@
 /**
- * js/auth-roles.js — v1.2 (CORREGIDO)
+ * js/auth-roles.js — v1.3
  * ══════════════════════════════════════════════════════════════
  * Módulo de Control de Acceso Basado en Roles (RBAC)
  *
- * CORRECCIONES v1.2:
+ * FASE-4 v1.3:
+ * • isUser() renombrado a hasAccess() para evitar confusión.
+ *   El nombre anterior sugería "no es admin" cuando en realidad
+ *   significa "tiene cualquier rol válido". Se mantiene isUser
+ *   como alias deprecado para no romper código existente.
  * • Guard _creatingProfile evita loops de creación duplicada
  * • Guard _listenersStarted evita duplicar listeners
  * • Guard _initInProgress evita llamadas simultáneas
@@ -216,8 +220,20 @@ export function cleanupRoles() {
 /** @returns {boolean} */
 export const isAdmin = () => state.userRole === 'admin';
 
-/** @returns {boolean} */
-export const isUser  = () => state.userRole === 'admin' || state.userRole === 'user';
+/**
+ * hasAccess() — true si el usuario tiene cualquier rol válido (admin o user).
+ * Fase-4: Renombrado desde isUser() para evitar confusión.
+ * El nombre anterior sugería "es un usuario no-admin", cuando en realidad
+ * significa "está autenticado con un rol válido". Cualquier código que
+ * leyera `if (isUser())` podía asumir que excluía admins → bugs de permisos.
+ *
+ * Alias isUser exportado para no romper código existente que lo importe.
+ * @returns {boolean}
+ */
+export const hasAccess = () => state.userRole === 'admin' || state.userRole === 'user';
+
+/** @deprecated Usar hasAccess() — mantenido por compatibilidad */
+export const isUser = hasAccess;
 
 /**
  * @param {'products'|'orders'|'inventory'|'auditoria'} context
@@ -227,8 +243,8 @@ export function canWrite(context) {
     switch (context) {
         case 'products':   return state.userRole === 'admin';
         case 'orders':     return state.userRole === 'admin';
-        case 'inventory':  return isUser();
-        case 'auditoria':  return isUser();
+        case 'inventory':  return hasAccess();
+        case 'auditoria':  return hasAccess();
         default:           return false;
     }
 }
@@ -435,6 +451,7 @@ function _updateRoleBadge(role) {
 // BINDINGS GLOBALES
 // ═════════════════════════════════════════════════════════════
 window.isAdmin     = isAdmin;
-window.isUser      = isUser;
+window.hasAccess   = hasAccess;
+window.isUser      = isUser;      // alias deprecado — usar hasAccess
 window.canWrite    = canWrite;
 window.getUserRole = getUserRole;
