@@ -1,5 +1,5 @@
 /**
- * js/storage.js — v2.4
+ * js/storage.js — v2.5
  * ══════════════════════════════════════════════════════════════
  * Persistencia local con localStorage (offline-first).
  *
@@ -72,23 +72,26 @@ export function loadFromLocalStorage() {
     if (Array.isArray(data.cart))              state.cart                      = data.cart;
     if (Array.isArray(data.orders))            state.orders                    = data.orders;
     if (Array.isArray(data.inventories))       state.inventories               = data.inventories;
-    if (data.activeTab)                        state.activeTab                 = data.activeTab;
-    if (data.selectedArea)                     state.selectedArea              = data.selectedArea;
-    if (data.selectedGroup)                    state.selectedGroup             = data.selectedGroup;
-    if (data.searchTerm !== undefined)         state.searchTerm                = data.searchTerm;
-    if (data.inventarioConteo)                 state.inventarioConteo          = data.inventarioConteo;
-    if (data.auditoriaConteo)                  state.auditoriaConteo           = data.auditoriaConteo;
-    if (data.auditoriaStatus)                  state.auditoriaStatus           = data.auditoriaStatus;
-    if (data.auditoriaConteoPorUsuario)        state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
-    if (data.ajustes)                          state.ajustes                   = data.ajustes;
-    if (data.syncEnabled !== undefined)        state.syncEnabled               = data.syncEnabled;
+    // Fase-3: Guardas estandarizadas a !== undefined para todos los campos.
+    // Las guardas truthy (if (data.x)) omitían valores válidos como '', 0 o false.
+    // Ejemplo: activeTab='' no se restauraba, selectedArea='' tampoco.
+    if (data.activeTab      !== undefined && data.activeTab      !== null) state.activeTab      = data.activeTab;
+    if (data.selectedArea   !== undefined && data.selectedArea   !== null) state.selectedArea   = data.selectedArea;
+    if (data.selectedGroup  !== undefined && data.selectedGroup  !== null) state.selectedGroup  = data.selectedGroup;
+    if (data.searchTerm     !== undefined)                                 state.searchTerm     = data.searchTerm;
+    if (data.inventarioConteo  !== undefined && data.inventarioConteo  !== null) state.inventarioConteo  = data.inventarioConteo;
+    if (data.auditoriaConteo   !== undefined && data.auditoriaConteo   !== null) state.auditoriaConteo   = data.auditoriaConteo;
+    if (data.auditoriaStatus   !== undefined && data.auditoriaStatus   !== null) state.auditoriaStatus   = data.auditoriaStatus;
+    if (data.auditoriaConteoPorUsuario !== undefined && data.auditoriaConteoPorUsuario !== null) state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
+    if (data.ajustes           !== undefined && data.ajustes           !== null) state.ajustes           = data.ajustes;
+    if (data.syncEnabled       !== undefined)                                    state.syncEnabled        = data.syncEnabled;
 
     // FIX BUG-9
-    if (data.auditoriaView)                    state.auditoriaView             = data.auditoriaView;
-    if (data.auditoriaAreaActiva !== undefined) state.auditoriaAreaActiva      = data.auditoriaAreaActiva;
-    if (data.isAuditoriaMode !== undefined)    state.isAuditoriaMode           = data.isAuditoriaMode;
-    if (Array.isArray(data.adjustmentsPending)) state.adjustmentsPending       = data.adjustmentsPending;
-    if (Array.isArray(data.ajustesPendientes))  state.ajustesPendientes        = data.ajustesPendientes;
+    if (data.auditoriaView      !== undefined && data.auditoriaView      !== null) state.auditoriaView      = data.auditoriaView;
+    if (data.auditoriaAreaActiva !== undefined)                                     state.auditoriaAreaActiva = data.auditoriaAreaActiva;
+    if (data.isAuditoriaMode    !== undefined)                                      state.isAuditoriaMode    = data.isAuditoriaMode;
+    if (Array.isArray(data.adjustmentsPending)) state.adjustmentsPending = data.adjustmentsPending;
+    if (Array.isArray(data.ajustesPendientes))  state.ajustesPendientes  = data.ajustesPendientes;
 
     // NUEVO v2.4: bloqueo por usuario
     if (data.conteoFinalizadoPorUsuario && typeof data.conteoFinalizadoPorUsuario === 'object') {

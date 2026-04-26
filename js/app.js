@@ -1,5 +1,5 @@
 /**
- * js/app.js — v2.2 CORREGIDO
+ * js/app.js — v2.4
  *
  * FIX BUG-5 (v2.1): Service Worker con ruta relativa './sw.js' y scope './'
  *   en lugar de '/sw.js' absoluta — necesario para GitHub Pages /index/.
@@ -50,7 +50,8 @@ import { syncStockByAreaFromConteo,
 import { initAuditUser }              from './audit.js';
 import { initAuth,
          onAuthReady,
-         getAuthReady }               from './auth.js';
+         getAuthReady,
+         onAuthChange }               from './auth.js';
 import { switchTab }                  from './render.js';
 import { updateNetworkStatus,
          syncToCloud,
@@ -143,8 +144,7 @@ window.addEventListener('DOMContentLoaded', () => {
     getAuthReady().then(user => {
       if (!user) {
         console.info('[App] Sin usuario — esperando login.');
-        // Esperar el próximo ciclo de login
-        _listenForNextLogin();
+        // onAuthChange() disparará _waitForUser() cuando el usuario haga login.
         return;
       }
 
@@ -160,6 +160,23 @@ window.addEventListener('DOMContentLoaded', () => {
       // El único interval correcto está dentro del guard if (!_appInitialized).
 
       switchTab(state.activeTab);
+
+      // Fase-4: Leer parámetro ?tab= de la URL para soportar shortcuts del PWA.
+      // Si el usuario abre la app desde un shortcut (ej. "Inventario" en el ícono),
+      // el manifest.json pasa ?tab=inventario y aquí lo aplicamos.
+      // Solo se aplica en el primer arranque (cuando _appInitialized es false).
+      if (!_appInitialized) {
+        const urlTab = new URLSearchParams(window.location.search).get('tab');
+        const VALID_TABS = ['inicio', 'inventario', 'productos', 'auditoria',
+                            'pedidos', 'reportes', 'ajustes', 'notificaciones'];
+        if (urlTab && VALID_TABS.includes(urlTab)) {
+          console.info(`[App] Shortcut PWA → tab: ${urlTab}`);
+          switchTab(urlTab);
+          // Limpiar el parámetro de la URL sin recargar la página
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, '', cleanUrl);
+        }
+      }
 
       // Inicializar listeners globales solo una vez por sesión del navegador
       if (!_appInitialized) {
@@ -219,29 +236,17 @@ window.addEventListener('DOMContentLoaded', () => {
 
       updateNetworkStatus();
       console.info('[App] ✓ Arranque completo.');
-
-      // Después del logout, volver a escuchar el siguiente login
-      _listenForNextLogin();
     }).catch(err => {
       console.error('[App] Error en getAuthReady():', err);
-      _listenForNextLogin();
     });
   }
 
-  // Escucha el próximo ciclo de auth (re-login después de logout)
-  function _listenForNextLogin() {
-    // Verificar cada 300ms si hay una nueva Promise de auth disponible
-    // (auth.js la recrea en logout/re-login)
-    let _prevPromise = getAuthReady();
-    const _checkInterval = setInterval(() => {
-      const _current = getAuthReady();
-      if (_current !== _prevPromise) {
-        clearInterval(_checkInterval);
-        _prevPromise = _current;
-        _waitForUser();
-      }
-    }, 300);
-  }
+  // Fase-3: Registrar _waitForUser como listener de cambios de auth.
+  // Se registra UNA SOLA VEZ. Cada vez que auth.js crea una nueva Promise
+  // (logout o cambio de usuario), onAuthChange dispara _waitForUser()
+  // directamente — sin polling de setInterval ni acumulación de timers.
+  onAuthChange(_waitForUser);
 
+  // Arranque inicial
   _waitForUser();
 });

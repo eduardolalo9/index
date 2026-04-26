@@ -1,5 +1,5 @@
 /**
- * js/auth.js — v3.1
+ * js/auth.js — v3.2
  * ══════════════════════════════════════════════════════════════
  * Autenticación Firebase Email/Password con control de roles.
  *
@@ -66,6 +66,30 @@ let _authReady = new Promise(resolve => { _authResolve = resolve; });
 
 export function getAuthReady() { return _authReady; }
 export { _authReady as onAuthReady };
+
+// ── Sistema de eventos de cambio de auth ──────────────────────
+// Fase-3: Reemplaza el polling setInterval de 300ms en app.js.
+// app.js registra _waitForUser una sola vez con onAuthChange().
+// Cada vez que _authReady cambia (logout/re-login), todos los
+// callbacks registrados son notificados directamente, sin polling.
+const _authChangeListeners = [];
+
+/**
+ * Registra un callback que se ejecuta cada vez que la Promise
+ * de auth cambia (es decir, en cada nuevo ciclo de login).
+ * @param {function} cb — se llama sin argumentos
+ */
+export function onAuthChange(cb) {
+    if (typeof cb === 'function' && !_authChangeListeners.includes(cb)) {
+        _authChangeListeners.push(cb);
+    }
+}
+
+function _notifyAuthChange() {
+    _authChangeListeners.forEach(cb => {
+        try { cb(); } catch (e) { console.error('[Auth] Error en onAuthChange listener:', e); }
+    });
+}
 
 const INIT_TIMEOUT = 15000;
 
@@ -152,9 +176,9 @@ async function _handleLogin(user) {
     if (_lastAuthUid !== null && _lastAuthUid !== user.uid) {
         console.info('[Auth] Cambio de usuario — limpiando sesión anterior.');
         cleanupRoles();
-        // Recrear Promise para el nuevo usuario.
-        // app.js detectará el cambio de referencia vía _listenForNextLogin().
         _authReady = new Promise(resolve => { _authResolve = resolve; });
+        // Notificar a app.js que hay una nueva Promise de auth disponible
+        _notifyAuthChange();
     }
 
     // Si _lastAuthUid === null:
@@ -224,7 +248,9 @@ function _handleLogout() {
     //   de referencia (P_anterior → P_logout) vía _listenForNextLogin()
     //   y espera sobre P_logout hasta que el usuario haga login.
     _authReady = new Promise(resolve => { _authResolve = resolve; });
-    // No llamar _authResolve aquí — se resuelve en el próximo _handleLogin.
+    // Notificar a app.js que hay una nueva Promise de auth disponible.
+    // app.js llamará _waitForUser() que hará .then() sobre la nueva Promise.
+    _notifyAuthChange();
 
     if (prevUid) console.info('[Auth] Sesión cerrada.');
 }

@@ -1,4 +1,4 @@
-// constants.js — v2.2 CORREGIDO
+// constants.js — v2.3
 // ══════════════════════════════════════════════════════════════
 // Configuración Global y Reglas de Negocio
 //
@@ -77,12 +77,11 @@ export const AREAS = {
 
 // ─── 10. Etiquetas legibles de áreas (auditoría) ─────────────
 // Usado por: render.js, audit.js
-// Separado de AREAS para permitir nombres distintos en auditoría
-export const AREAS_AUDITORIA = {
-    almacen: 'Almacén',
-    barra1:  'Barra 1',
-    barra2:  'Barra 2',
-};
+// Fase-3: AREAS_AUDITORIA era idéntico a AREAS. Ahora es un alias directo.
+// No hay cambios en los archivos que lo importan — funciona igual.
+// Si en el futuro se necesitan nombres distintos para auditoría,
+// reemplazar esta línea por un objeto independiente.
+export const AREAS_AUDITORIA = AREAS;
 
 // ─── 11. Íconos Font Awesome por área (auditoría) ─────────────
 // Usado por: render.js — se inyecta en <i class="...">
