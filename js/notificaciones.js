@@ -227,7 +227,10 @@ export function renderNotificacionesPanel() {
             ? `<span style="width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0;"></span>`
             : '';
 
-        html += `<div onclick="window.marcarNotifLeida('${n._id}')"
+        // FIX Fase-2: Usar data-id en lugar de interpolar n._id directamente
+        // en el onclick. Evita XSS si un ID contuviera comillas u otros
+        // caracteres especiales. El handler delegado lee el atributo de forma segura.
+        html += `<div data-notif-id="${escapeHtml(n._id)}"
             style="display:flex;align-items:flex-start;gap:10px;padding:10px 16px;
                    border-bottom:1px solid var(--border);cursor:pointer;
                    background:${!n.leida ? 'var(--accent-dim)' : 'transparent'};
@@ -245,6 +248,25 @@ export function renderNotificacionesPanel() {
     return html;
 }
 
+// ─── Handler delegado para clicks en notificaciones ───────────
+// FIX Fase-2: En lugar de interpolar el ID en un onclick inline,
+// usamos delegación de eventos sobre el contenedor del panel.
+// Se registra una sola vez; cada re-render reutiliza el mismo handler.
+let _notifPanelHandlerAttached = false;
+export function attachNotifPanelHandler() {
+    if (_notifPanelHandlerAttached) return;
+    _notifPanelHandlerAttached = true;
+    document.addEventListener('click', e => {
+        const item = e.target.closest('[data-notif-id]');
+        if (!item) return;
+        const id = item.dataset.notifId;
+        if (id) marcarComoLeida(id);
+    });
+}
+
 // ─── Bindings globales ────────────────────────────────────────
 window.marcarNotifLeida   = marcarComoLeida;
 window.marcarTodasLeidas  = marcarTodasLeidas;
+
+// Registrar el handler delegado al cargar el módulo
+attachNotifPanelHandler();

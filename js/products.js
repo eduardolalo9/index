@@ -82,9 +82,16 @@ export function addProduct(productData) {
     const m = String(p.id).match(/^PRD-(\d+)$/);
     if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
   });
-  // Respetar ID manual si se proporcionó y no está duplicado
+  // Respetar ID manual si se proporcionó, no está duplicado y tiene formato válido.
+  // FIX Fase-2: Validar que el ID no contenga caracteres especiales que tienen
+  // significado en Firestore (/, ., ..) o que puedan romper queries.
   const rawId = productData.id ? String(productData.id).trim() : '';
-  const id = (rawId && !state.products.find(p => p.id === rawId))
+  const ID_REGEX = /^[a-zA-Z0-9\-_]{1,50}$/;
+  const validRawId = rawId && ID_REGEX.test(rawId);
+  if (rawId && !validRawId) {
+    console.warn('[Products] ID manual rechazado (caracteres inválidos):', rawId);
+  }
+  const id = (validRawId && !state.products.find(p => p.id === rawId))
     ? rawId
     : 'PRD-' + String(maxNum + 1).padStart(3, '0');
 
