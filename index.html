@@ -203,8 +203,8 @@
         </main>
 
         <!-- MODAL: Producto -->
-        <div id="productModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fadeIn hidden" role="dialog" aria-modal="true" aria-labelledby="productModalTitle">
-            <div class="bg-white shadow-2xl max-w-md w-full p-5 animate-slideUp max-h-[90vh] overflow-y-auto">
+        <div id="productModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fadeIn hidden" style="padding:16px;" role="dialog" aria-modal="true" aria-labelledby="productModalTitle">
+            <div class="bg-white shadow-2xl max-w-md w-full p-5 animate-slideUp rounded-2xl flex flex-col" style="max-height:min(90vh,calc(100dvh - 32px));overflow-y:auto;">
                 <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6"></div>
                 <h2 class="text-2xl font-bold text-gray-900 mb-6" id="productModalTitle">Agregar Producto</h2>
                 <div class="space-y-4">
@@ -257,8 +257,8 @@
         </div>
 
         <!-- MODAL: Pedido -->
-        <div id="orderModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-end sm:items-center justify-center z-50 animate-fadeIn hidden" role="dialog" aria-modal="true" aria-labelledby="orderModalTitle">
-            <div class="bg-white shadow-2xl max-w-4xl w-full animate-slideUp rounded-t-2xl sm:rounded-2xl flex flex-col" style="max-height:92vh;">
+        <div id="orderModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fadeIn hidden" style="padding:16px;" role="dialog" aria-modal="true" aria-labelledby="orderModalTitle">
+            <div class="bg-white shadow-2xl max-w-4xl w-full animate-slideUp rounded-2xl flex flex-col" style="max-height:min(92vh,calc(100dvh - 32px));">
 
                 <!-- Header fijo -->
                 <div class="px-5 pt-5 pb-3 flex-shrink-0">
@@ -324,7 +324,7 @@
         <!-- MODAL: Inventario / Conteo de botellas -->
         <div id="inventarioModal"
              class="fixed inset-0 flex items-center justify-center z-50 animate-fadeIn hidden"
-             style="padding: 16px;"
+             style="padding: 16px; background: rgba(0,0,0,0.65);"
              role="dialog" aria-modal="true" aria-labelledby="inventarioModalTitle">
 
             <div id="inventarioModalCard" class="inv-modal-card">
