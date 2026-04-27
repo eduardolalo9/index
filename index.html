@@ -29,7 +29,6 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="firebase-credentials.js"></script>   <!-- gitignored -->
     <script src="firebase-config.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -258,56 +257,67 @@
         </div>
 
         <!-- MODAL: Pedido -->
-        <div id="orderModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fadeIn hidden" role="dialog" aria-modal="true" aria-labelledby="orderModalTitle">
-            <div class="bg-white shadow-2xl max-w-4xl w-full p-5 animate-slideUp max-h-[95vh] overflow-y-auto">
-                <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6"></div>
-                <h2 class="text-2xl font-bold text-gray-900 mb-6" id="orderModalTitle">Generar Pedido</h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                    <div>
-                        <label for="orderSupplier" class="block text-sm font-medium text-gray-600 mb-2">Proveedor *</label>
-                        <input type="text" id="orderSupplier" maxlength="80" class="w-full px-3 py-2 bg-white text-gray-900 border border-gray-200 rounded" placeholder="Nombre del proveedor">
-                    </div>
-                    <div>
-                        <label for="orderDeliveryDate" class="block text-sm font-medium text-gray-600 mb-2">Fecha de Entrega (Opcional)</label>
-                        <input type="date" id="orderDeliveryDate" class="w-full px-3 py-2 bg-white text-gray-900 border border-gray-200 rounded">
-                    </div>
-                    <div class="md:col-span-2">
-                        <label for="orderNote" class="block text-sm font-medium text-gray-600 mb-2">Nota (Opcional)</label>
-                        <textarea id="orderNote" rows="2" maxlength="200" class="w-full px-3 py-2 bg-white text-gray-900 border border-gray-200 rounded" placeholder="Agregar nota o comentarios"></textarea>
-                    </div>
+        <div id="orderModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-end sm:items-center justify-center z-50 animate-fadeIn hidden" role="dialog" aria-modal="true" aria-labelledby="orderModalTitle">
+            <div class="bg-white shadow-2xl max-w-4xl w-full animate-slideUp rounded-t-2xl sm:rounded-2xl flex flex-col" style="max-height:92vh;">
+
+                <!-- Header fijo -->
+                <div class="px-5 pt-5 pb-3 flex-shrink-0">
+                    <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4"></div>
+                    <h2 class="text-xl font-bold text-gray-900" id="orderModalTitle">Generar Pedido</h2>
                 </div>
-                <div class="mb-6">
-                    <div class="flex items-center justify-between mb-3">
-                        <h3 class="font-semibold text-gray-900">Productos en el Pedido</h3>
-                        <span class="text-sm font-medium text-purple-600 bg-purple-50 px-3 py-1 rounded-lg" id="orderTotal">Total: 0</span>
-                    </div>
-                    <div class="bg-gray-50 rounded-xl overflow-hidden border border-gray-200">
-                        <div class="overflow-x-auto">
-                            <table class="w-full">
-                                <thead class="bg-gradient-to-r from-purple-600 to-blue-600">
-                                    <tr>
-                                        <th class="px-4 py-3 text-left text-sm font-semibold text-white">Producto</th>
-                                        <th class="px-4 py-3 text-center text-sm font-semibold text-white">Unidad</th>
-                                        <th class="px-4 py-3 text-center text-sm font-semibold text-white">Cantidad</th>
-                                        <th class="px-4 py-3 text-center text-sm font-semibold text-white">Acciones</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="orderProductsTable" class="divide-y divide-gray-200"></tbody>
-                            </table>
+
+                <!-- Contenido scrollable -->
+                <div class="overflow-y-auto flex-1 px-5">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label for="orderSupplier" class="block text-sm font-medium text-gray-600 mb-2">Proveedor *</label>
+                            <input type="text" id="orderSupplier" maxlength="80" class="w-full px-3 py-2 bg-white text-gray-900 border border-gray-200 rounded" placeholder="Nombre del proveedor">
+                        </div>
+                        <div>
+                            <label for="orderDeliveryDate" class="block text-sm font-medium text-gray-600 mb-2">Fecha de Entrega (Opcional)</label>
+                            <input type="date" id="orderDeliveryDate" class="w-full px-3 py-2 bg-white text-gray-900 border border-gray-200 rounded">
+                        </div>
+                        <div class="md:col-span-2">
+                            <label for="orderNote" class="block text-sm font-medium text-gray-600 mb-2">Nota (Opcional)</label>
+                            <textarea id="orderNote" rows="2" maxlength="200" class="w-full px-3 py-2 bg-white text-gray-900 border border-gray-200 rounded" placeholder="Agregar nota o comentarios"></textarea>
                         </div>
                     </div>
-                    <div id="emptyCart" class="text-center py-8 text-gray-500 hidden">
-                        <svg class="w-12 h-12 mx-auto mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-                        <p>No hay productos en el carrito</p>
+                    <div class="mb-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="font-semibold text-gray-900">Productos en el Pedido</h3>
+                            <span class="text-sm font-medium text-purple-600 bg-purple-50 px-3 py-1 rounded-lg" id="orderTotal">Total: 0</span>
+                        </div>
+                        <div class="bg-gray-50 rounded-xl overflow-hidden border border-gray-200">
+                            <div class="overflow-x-auto">
+                                <table class="w-full">
+                                    <thead class="bg-gradient-to-r from-purple-600 to-blue-600">
+                                        <tr>
+                                            <th class="px-4 py-3 text-left text-sm font-semibold text-white">Producto</th>
+                                            <th class="px-4 py-3 text-center text-sm font-semibold text-white">Unidad</th>
+                                            <th class="px-4 py-3 text-center text-sm font-semibold text-white">Cantidad</th>
+                                            <th class="px-4 py-3 text-center text-sm font-semibold text-white">Acciones</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="orderProductsTable" class="divide-y divide-gray-200"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div id="emptyCart" class="text-center py-8 text-gray-500 hidden">
+                            <svg class="w-12 h-12 mx-auto mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+                            <p>No hay productos en el carrito</p>
+                        </div>
                     </div>
                 </div>
-                <div class="flex gap-3">
-                    <button type="button" onclick="closeOrderModal()" class="flex-1 px-5 py-2 border border-gray-200 text-gray-900 rounded font-medium">Cancelar</button>
-                    <button type="button" onclick="createOrder()" class="flex-1 px-5 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded font-medium flex items-center justify-center gap-2">
+
+                <!-- Botones FIJOS al fondo — siempre visibles -->
+                <div class="flex gap-3 px-5 py-4 border-t border-gray-100 flex-shrink-0 bg-white rounded-b-2xl">
+                    <button type="button" onclick="closeOrderModal()" class="flex-1 px-5 py-3 border border-gray-200 text-gray-900 rounded-xl font-medium">Cancelar</button>
+                    <button type="button" onclick="createOrder()" class="flex-1 px-5 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-medium flex items-center justify-center gap-2">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
                         Compartir WhatsApp
                     </button>
                 </div>
+
             </div>
         </div>
 
