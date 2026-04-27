@@ -42,6 +42,9 @@ export function saveToLocalStorage() {
       ajustes:                     state.ajustes,
       syncEnabled:                 state.syncEnabled,
       _lastModified:               Date.now(),
+      // FIX: persistir el timestamp del último ciclo de reset para que
+      // al recargar la página no se re-dispare applyRemoteReset()
+      _resetCicloTs:               parseInt(localStorage.getItem('inventarioApp_resetCicloTs') || '0', 10),
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));

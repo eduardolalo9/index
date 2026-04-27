@@ -289,6 +289,20 @@ async function _applyMainDocData(data) {
     if (cloudResetTs > 0 && cloudResetTs > localResetTs) {
         localStorage.setItem('inventarioApp_resetCicloTs', String(cloudResetTs));
         console.info('[Snapshot] _resetCicloTs nuevo detectado — aplicando reset remoto de auditoría.');
+
+        // FIX-NUEVO: Limpiar timestamps anti-eco de todas las áreas para que
+        // los snapshots de stockAreas con ceros NO sean ignorados por el filtro
+        // de timestamps. Sin esto, los dispositivos clientes verían el stock
+        // del ciclo anterior porque _storeLocalAreaTs tenía ts más reciente.
+        try {
+            const keysToReset = [];
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const k = sessionStorage.key(i);
+                if (k?.startsWith('_areaTs:')) keysToReset.push(k);
+            }
+            keysToReset.forEach(k => sessionStorage.setItem(k, '0'));
+        } catch (_) {}
+
         import('./audit.js').then(m => {
             if (typeof m.applyRemoteReset === 'function') m.applyRemoteReset();
         }).catch(e => console.warn('[Snapshot] applyRemoteReset falló:', e));
@@ -334,6 +348,20 @@ async function _applyMainDocData(data) {
 function _applyStockAreaData(area, areaData) {
     // Construir set de IDs existentes para filtrado O(1)
     const existingIds = new Set(state.products.map(p => p.id));
+
+    // FIX-NUEVO: Si el snapshot llega con solo _resetTs (resultado de un reset
+    // del admin), poner a cero TODOS los productos en esa área en lugar de
+    // dejar el stock del ciclo anterior.
+    const hasProductData = Object.keys(areaData).some(k => !k.startsWith('_'));
+    if (!hasProductData && areaData._resetTs) {
+        console.info(`[Snapshot][stockArea:${area}] Reset snapshot recibido — poniendo stock a cero.`);
+        state.products.forEach(p => {
+            if (!state.inventarioConteo[p.id]) state.inventarioConteo[p.id] = {};
+            state.inventarioConteo[p.id][area] = 0;
+        });
+        syncStockByAreaFromConteo();
+        return;
+    }
 
     Object.keys(areaData).forEach(prodId => {
         // Omitir campos internos (timestamps, flags)
@@ -1114,14 +1142,19 @@ export async function resetConteoAtomicoEnFirestore() {
     updateCloudSyncBadge('tx');
 
     try {
-        // Batch atómico: 6 deletes simultáneos (sin ventanas de estado parcial)
+        // Batch atómico: deletes de conteoAreas + conteoPorUsuario + reset de stockAreas
         const batch = window._db.batch();
         AREA_KEYS.forEach(area => {
             batch.delete(baseRef.doc(area));
             batch.delete(userRef.doc(area));
+
+            // FIX-NUEVO: Poner a cero stockAreas para que los listeners
+            // onSnapshot propaguen el stock=0 a todos los dispositivos.
+            const stockRef2 = docRef.collection('stockAreas').doc(area);
+            batch.set(stockRef2, { _resetTs: resetTs, _lastModified: resetTs });
         });
         await batch.commit();
-        console.info('[TxReset] Batch de deletes completado (6 documentos).');
+        console.info('[TxReset] Batch de deletes + stockAreas reset completado.');
 
         // Transaction: resetear auditoriaStatus con dot-notation
         await window._db.runTransaction(async tx => {

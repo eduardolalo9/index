@@ -48,8 +48,22 @@ function _commit() {
 }
 
 const _el = id => document.getElementById(id);
-function _showModal(id) { _el(id)?.classList.remove('hidden'); }
-function _hideModal(id) { _el(id)?.classList.add('hidden'); }
+function _showModal(id) {
+  const el = _el(id);
+  if (!el) return;
+  el.classList.remove('hidden');
+  // FIX: bloquear scroll del fondo cuando un modal está abierto
+  document.body.classList.add('modal-open');
+}
+function _hideModal(id) {
+  const el = _el(id);
+  if (!el) return;
+  el.classList.add('hidden');
+  // FIX: quitar el bloqueo solo si NO hay otro modal abierto
+  const anyOpen = ['productModal', 'orderModal', 'inventarioModal']
+    .some(mid => !_el(mid)?.classList.contains('hidden'));
+  if (!anyOpen) document.body.classList.remove('modal-open');
+}
 
 function _fmtQty(qty) {
   const n = parseFloat(qty) || 0;
@@ -260,10 +274,10 @@ function createOrder() {
   state.cart = [];
 
   const lines = [
-    `📦 *PEDIDO BARRA*`,
+    `📦 *PEDIDO BarInventory*`,
     `🏪 Proveedor: ${order.supplier}`,
     `📅 Fecha: ${order.date} ${order.time}`,
-    deliveryDate ? `📅 Entrega: ${deliveryDate}` : null,
+    deliveryDate ? `Entrega: ${deliveryDate}` : null,
     note ? `📝 Nota: ${note}` : null,
     ``,
     ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
@@ -282,7 +296,7 @@ function shareOrderWhatsApp(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) return;
   const lines = [
-    `📦 *PEDIDO BARRA* (Reenvío)`,
+    `📦 *PEDIDO BarInventory* (Reenvío)`,
     `🏪 Proveedor: ${order.supplier}`,
     `📅 Fecha original: ${order.date} ${order.time}`,
     ``,

@@ -671,6 +671,15 @@ export function auditoriaResetear() {
             state.auditoriaView             = 'selection';
             state.auditoriaAreaActiva       = null;
             state.isAuditoriaMode           = false;
+
+            // FIX-NUEVO: Poner a cero el stockByArea de todos los productos
+            // en el estado local para que la UI muestre 0 inmediatamente.
+            state.products.forEach(p => {
+                if (p.stockByArea) {
+                    p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
+                }
+            });
+
             saveToLocalStorage();
 
             showNotification('🔄 Nuevo ciclo iniciado');
@@ -684,6 +693,7 @@ export function auditoriaResetear() {
                     await resetConteoAtomicoEnFirestore();
 
                     const batch = window._db.batch();
+                    const resetTs = Date.now();
 
                     // FIX: Limpiar conteoPorUsuario SIN merge para borrar todos
                     // los conteos de producto de cada área, no solo _finalizados.
@@ -694,7 +704,25 @@ export function auditoriaResetear() {
                             .doc(window.FIRESTORE_DOC_ID)
                             .collection('conteoPorUsuario')
                             .doc(area);
-                        batch.set(ref, { _finalizados: {}, _resetTs: Date.now() });
+                        batch.set(ref, { _finalizados: {}, _resetTs: resetTs });
+
+                        // FIX-NUEVO: Limpiar conteoAreas (auditoría atómica) también
+                        const conteoRef = window._db
+                            .collection('inventarioApp')
+                            .doc(window.FIRESTORE_DOC_ID)
+                            .collection('conteoAreas')
+                            .doc(area);
+                        batch.set(conteoRef, { _resetTs: resetTs });
+
+                        // FIX-NUEVO: Limpiar stockAreas (inventario operativo)
+                        // para que TODOS los dispositivos vean ceros al iniciar
+                        // el nuevo ciclo, no el stock del ciclo anterior.
+                        const stockRef = window._db
+                            .collection('inventarioApp')
+                            .doc(window.FIRESTORE_DOC_ID)
+                            .collection('stockAreas')
+                            .doc(area);
+                        batch.set(stockRef, { _resetTs: resetTs, _lastModified: resetTs });
                     });
 
                     // FIX: Escribir el reset al doc principal para que otros
@@ -803,10 +831,20 @@ export function applyRemoteReset() {
     state.auditoriaConteo           = {};
     state.auditoriaConteoPorUsuario = {};
     state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
+    // FIX-NUEVO: También limpiar el inventario operativo para que la pantalla
+    // de conteo arranque en ceros en todos los dispositivos.
     state.inventarioConteo          = {};
     state.auditoriaView             = 'selection';
     state.auditoriaAreaActiva       = null;
     state.isAuditoriaMode           = false;
+
+    // FIX-NUEVO: Sincronizar stockByArea en todos los productos a cero
+    // para que la UI muestre 0 inmediatamente sin esperar un snapshot.
+    state.products.forEach(p => {
+        if (p.stockByArea) {
+            p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 };
+        }
+    });
 
     import('./storage.js').then(m => m.saveToLocalStorage()).catch(() => {});
     import('./render.js').then(m => {
@@ -814,8 +852,7 @@ export function applyRemoteReset() {
         console.info('[Audit] ✓ UI actualizada tras reset remoto.');
     }).catch(() => {});
 
-    import('./notificaciones.js').then(m => {
-        // Solo mostrar si la notificación de broadcast no ha llegado aún
+    import('./notificaciones.js').then(() => {
         window.showNotification?.('🔄 Nuevo ciclo de inventario iniciado por el admin');
     }).catch(() => {
         window.showNotification?.('🔄 Nuevo ciclo de inventario iniciado por el admin');
