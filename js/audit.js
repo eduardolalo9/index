@@ -682,18 +682,39 @@ export function auditoriaResetear() {
             if (window._db && navigator.onLine) {
                 try {
                     await resetConteoAtomicoEnFirestore();
-                    // Limpiar locks en Firestore
+
                     const batch = window._db.batch();
+
+                    // FIX: Limpiar conteoPorUsuario SIN merge para borrar todos
+                    // los conteos de producto de cada área, no solo _finalizados.
+                    // Con merge:true quedaban los conteos del ciclo anterior.
                     AREA_KEYS.forEach(area => {
                         const ref = window._db
                             .collection('inventarioApp')
                             .doc(window.FIRESTORE_DOC_ID)
                             .collection('conteoPorUsuario')
                             .doc(area);
-                        batch.set(ref, { _finalizados: {} }, { merge: true });
+                        batch.set(ref, { _finalizados: {}, _resetTs: Date.now() });
                     });
+
+                    // FIX: Escribir el reset al doc principal para que otros
+                    // dispositivos reciban el snap y limpien su estado local.
+                    // _resetCicloTs es la señal — sync.js la detecta y llama
+                    // applyRemoteReset() en cada dispositivo conectado.
+                    const mainRef = window._db
+                        .collection('inventarioApp')
+                        .doc(window.FIRESTORE_DOC_ID);
+                    batch.update(mainRef, {
+                        auditoriaConteo:           {},
+                        'auditoriaStatus.almacen': 'pendiente',
+                        'auditoriaStatus.barra1':  'pendiente',
+                        'auditoriaStatus.barra2':  'pendiente',
+                        _resetCicloTs:             Date.now(),
+                        _lastModified:             Date.now(),
+                    });
+
                     await batch.commit();
-                    console.info('[Audit] ✓ Reset completo en Firestore.');
+                    console.info('[Audit] ✓ Reset completo en Firestore — todos los dispositivos recibirán el reset.');
                 } catch (err) {
                     console.warn('[Audit] Reset en Firestore falló:', err?.message);
                 }
@@ -762,6 +783,43 @@ export function applyLockStatusFromSnapshot(area, docData) {
     });
 
     saveToLocalStorage();
+}
+
+// ═════════════════════════════════════════════════════════════
+//  RESET REMOTO — llamado por sync.js cuando detecta _resetCicloTs nuevo
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * Aplica el reset de auditoría en este dispositivo cuando sync.js
+ * detecta un _resetCicloTs más nuevo que el local.
+ *
+ * Llamado desde _applyMainDocData() en sync.js.
+ * Limpia el estado local de auditoría sin tocar Firestore
+ * (el admin ya lo hizo).
+ */
+export function applyRemoteReset() {
+    console.info('[Audit] Reset remoto recibido — limpiando estado local de auditoría.');
+    state.auditoriaStatus           = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
+    state.auditoriaConteo           = {};
+    state.auditoriaConteoPorUsuario = {};
+    state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
+    state.inventarioConteo          = {};
+    state.auditoriaView             = 'selection';
+    state.auditoriaAreaActiva       = null;
+    state.isAuditoriaMode           = false;
+
+    import('./storage.js').then(m => m.saveToLocalStorage()).catch(() => {});
+    import('./render.js').then(m => {
+        m.renderTab();
+        console.info('[Audit] ✓ UI actualizada tras reset remoto.');
+    }).catch(() => {});
+
+    import('./notificaciones.js').then(m => {
+        // Solo mostrar si la notificación de broadcast no ha llegado aún
+        window.showNotification?.('🔄 Nuevo ciclo de inventario iniciado por el admin');
+    }).catch(() => {
+        window.showNotification?.('🔄 Nuevo ciclo de inventario iniciado por el admin');
+    });
 }
 
 // ── Bindings globales ─────────────────────────────────────────
