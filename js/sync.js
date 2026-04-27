@@ -277,11 +277,25 @@ async function _applyMainDocData(data) {
     if (Array.isArray(data.products))  state.products        = data.products;
     if (Array.isArray(data.cart))      state.cart            = data.cart;
     // FIX BUG-7: NO aplicar activeTab ni selectedArea desde la nube.
-    // Hacerlo cambia la pestaña activa del usuario en tiempo real cuando otro
-    // dispositivo sincroniza — comportamiento no deseado y confuso.
-    // Cada dispositivo mantiene su propia navegación local.
     // if (data.activeTab)             state.activeTab       = data.activeTab;   ← REMOVIDO
     // if (data.selectedArea)          state.selectedArea    = data.selectedArea; ← REMOVIDO
+
+    // ── Detección de reset de auditoría iniciado por el admin ──
+    // Si _resetCicloTs es más nuevo que el local, el admin inició un nuevo ciclo.
+    // Llamamos applyRemoteReset() en audit.js para limpiar el estado local
+    // de este dispositivo (conteos, locks, statuses) sin tocar Firestore.
+    const cloudResetTs = data._resetCicloTs || 0;
+    const localResetTs = parseInt(localStorage.getItem('inventarioApp_resetCicloTs') || '0', 10);
+    if (cloudResetTs > 0 && cloudResetTs > localResetTs) {
+        localStorage.setItem('inventarioApp_resetCicloTs', String(cloudResetTs));
+        console.info('[Snapshot] _resetCicloTs nuevo detectado — aplicando reset remoto de auditoría.');
+        import('./audit.js').then(m => {
+            if (typeof m.applyRemoteReset === 'function') m.applyRemoteReset();
+        }).catch(e => console.warn('[Snapshot] applyRemoteReset falló:', e));
+        // Salir temprano — applyRemoteReset ya maneja el render
+        return;
+    }
+
     if (data.auditoriaConteo)          state.auditoriaConteo = data.auditoriaConteo;
 
     // "completada always wins" — ningún dispositivo puede re-abrir una zona
