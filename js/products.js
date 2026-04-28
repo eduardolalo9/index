@@ -126,17 +126,19 @@ export function updateProduct(id, updates) {
   return product;
 }
 
-export function deleteProduct(id) {
-  const index = state.products.findIndex(p => p.id === id);
-  if (index === -1) { showNotification('⚠️ Producto no encontrado'); return false; }
-  const name = state.products[index].name;
-  state.products.splice(index, 1);
-  delete state.inventarioConteo[id];
-  delete state.auditoriaConteo[id];
-  delete state.auditoriaConteoPorUsuario[id];
-  saveToLocalStorage();
-  showNotification(`🗑️ "${name}" eliminado`);
-  return true;
+
+async function deleteAllProducts() {
+    if (state.userRole !== 'admin') return;
+    const ok = await showConfirm('...');
+    if (!ok) return;
+    state.products                   = [];
+    state.inventarioConteo           = {};
+    state.auditoriaConteo            = {};
+    state.auditoriaConteoPorUsuario  = {};         // ← AGREGAR
+    state.conteoFinalizadoPorUsuario = {           // ← AGREGAR
+        almacen: {}, barra1: {}, barra2: {}
+    };
+    _commit();
 }
 
 export function tieneConversion(product) {
