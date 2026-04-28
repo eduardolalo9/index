@@ -224,6 +224,13 @@ export async function procesarAjuste(ajusteId, aprobado) {
                 const numVal = parseFloat(ajuste.valorNuevo);
                 product[ajuste.campo] = isNaN(numVal) ? ajuste.valorNuevo : numVal;
                 saveToLocalStorage();
+                // FIX R-03: sincronizar inmediatamente para que otros dispositivos
+                // vean el cambio aprobado sin esperar el ciclo de 30s de auto-save.
+                if (state.syncEnabled && window._db && navigator.onLine) {
+                    import('./sync.js').then(m => m.syncToCloud()).catch(e =>
+                        console.warn('[Ajustes] syncToCloud tras ajuste falló:', e)
+                    );
+                }
             }
         }
 

@@ -48,22 +48,8 @@ function _commit() {
 }
 
 const _el = id => document.getElementById(id);
-function _showModal(id) {
-  const el = _el(id);
-  if (!el) return;
-  el.classList.remove('hidden');
-  // FIX: bloquear scroll del fondo cuando un modal está abierto
-  document.body.classList.add('modal-open');
-}
-function _hideModal(id) {
-  const el = _el(id);
-  if (!el) return;
-  el.classList.add('hidden');
-  // FIX: quitar el bloqueo solo si NO hay otro modal abierto
-  const anyOpen = ['productModal', 'orderModal', 'inventarioModal']
-    .some(mid => !_el(mid)?.classList.contains('hidden'));
-  if (!anyOpen) document.body.classList.remove('modal-open');
-}
+function _showModal(id) { _el(id)?.classList.remove('hidden'); }
+function _hideModal(id) { _el(id)?.classList.add('hidden'); }
 
 function _fmtQty(qty) {
   const n = parseFloat(qty) || 0;
@@ -275,10 +261,10 @@ function createOrder() {
 
   const lines = [
     `📦 *PEDIDO BarInventory*`,
-    `🏪 Proveedor: ${order.supplier}`,
-    `📅 Fecha: ${order.date} ${order.time}`,
+    `Proveedor: ${order.supplier}`,
+    `Fecha: ${order.date} ${order.time}`,
     deliveryDate ? `Entrega: ${deliveryDate}` : null,
-    note ? `📝 Nota: ${note}` : null,
+    note ? `Nota: ${note}` : null,
     ``,
     ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
     ``,
@@ -297,8 +283,8 @@ function shareOrderWhatsApp(orderId) {
   if (!order) return;
   const lines = [
     `📦 *PEDIDO BarInventory* (Reenvío)`,
-    `🏪 Proveedor: ${order.supplier}`,
-    `📅 Fecha original: ${order.date} ${order.time}`,
+    `Proveedor: ${order.supplier}`,
+    `Fecha original: ${order.date} ${order.time}`,
     ``,
     ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
     ``,
@@ -530,6 +516,12 @@ async function resetAllInventario() {
   state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
   state.inventarioConteo = {};
   state.auditoriaConteo  = {};
+  // FIX R-02: limpiar también datos de auditoría multi-usuario.
+  // Antes, el panel del admin seguía mostrando a los bartenders como
+  // "Finalizados" con conteos del ciclo anterior después del reset.
+  state.auditoriaConteoPorUsuario  = {};
+  state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
+  state.auditoriaStatus            = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
   _commit();
   showNotification('✅ Inventario reseteado');
 }

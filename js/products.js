@@ -82,16 +82,9 @@ export function addProduct(productData) {
     const m = String(p.id).match(/^PRD-(\d+)$/);
     if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
   });
-  // Respetar ID manual si se proporcionó, no está duplicado y tiene formato válido.
-  // FIX Fase-2: Validar que el ID no contenga caracteres especiales que tienen
-  // significado en Firestore (/, ., ..) o que puedan romper queries.
+  // Respetar ID manual si se proporcionó y no está duplicado
   const rawId = productData.id ? String(productData.id).trim() : '';
-  const ID_REGEX = /^[a-zA-Z0-9\-_]{1,50}$/;
-  const validRawId = rawId && ID_REGEX.test(rawId);
-  if (rawId && !validRawId) {
-    console.warn('[Products] ID manual rechazado (caracteres inválidos):', rawId);
-  }
-  const id = (validRawId && !state.products.find(p => p.id === rawId))
+  const id = (rawId && !state.products.find(p => p.id === rawId))
     ? rawId
     : 'PRD-' + String(maxNum + 1).padStart(3, '0');
 
@@ -126,19 +119,42 @@ export function updateProduct(id, updates) {
   return product;
 }
 
-
-async function deleteAllProducts() {
-    if (state.userRole !== 'admin') return;
-    const ok = await showConfirm('...');
-    if (!ok) return;
-    state.products                   = [];
-    state.inventarioConteo           = {};
-    state.auditoriaConteo            = {};
-    state.auditoriaConteoPorUsuario  = {};         // ← AGREGAR
-    state.conteoFinalizadoPorUsuario = {           // ← AGREGAR
-        almacen: {}, barra1: {}, barra2: {}
-    };
-    _commit();
+export function deleteProduct(id) {
+  const index = state.products.findIndex(p => p.id === id);
+  if (index === -1) { showNotification('⚠️ Producto no encontrado'); return false; }
+  const name = state.products[index].name;
+  state.products.splice(index, 1);
+  delete state.inventarioConteo[id];
+  delete state.auditoriaConteo[id];
+  delete state.auditoriaConteoPorUsuario[id];
+  saveToLocalStorage();
+  // FIX R-06: limpiar datos del producto en subcollecciones de Firestore.
+  // Antes los datos huérfanos quedaban para siempre en stockAreas,
+  // conteoAreas y conteoPorUsuario, aumentando el costo y el tamaño.
+  if (window._db && navigator.onLine && window.FIRESTORE_DOC_ID) {
+    const docRef = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID);
+    const batch  = window._db.batch();
+    const AREA_KEYS_LOCAL = ['almacen', 'barra1', 'barra2'];
+    ['stockAreas', 'conteoAreas'].forEach(subcoll => {
+      AREA_KEYS_LOCAL.forEach(area => {
+        const ref = docRef.collection(subcoll).doc(area);
+        // update con dot-notation para borrar solo el campo del producto
+        // sin tocar los demás productos del mismo documento de área
+        batch.update(ref, { [id]: firebase?.firestore?.FieldValue?.delete() || null })
+             .catch?.(() => {});
+      });
+    });
+    AREA_KEYS_LOCAL.forEach(area => {
+      const ref = docRef.collection('conteoPorUsuario').doc(area);
+      batch.update(ref, { [id]: firebase?.firestore?.FieldValue?.delete() || null })
+           .catch?.(() => {});
+    });
+    batch.commit().catch(e =>
+      console.warn('[Products] Cleanup Firestore falló (no crítico):', e?.message)
+    );
+  }
+  showNotification(`🗑️ "${name}" eliminado`);
+  return true;
 }
 
 export function tieneConversion(product) {
@@ -462,6 +478,14 @@ export function finalizarInventario() {
   state.auditoriaStatus = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
   state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
   saveToLocalStorage();
+  // FIX R-05: sincronizar inmediatamente. Sin esto el snapshot del inventario
+  // solo vivía en localStorage hasta el próximo auto-save (30s).
+  // Si el dispositivo se cerraba en esa ventana, el historial se perdía.
+  if (state.syncEnabled && window._db && navigator.onLine) {
+    import('./sync.js').then(m => m.syncToCloud()).catch(e =>
+      console.warn('[Products] syncToCloud tras finalizarInventario falló:', e)
+    );
+  }
   showNotification('✅ Inventario finalizado y guardado en historial');
   return snapshot;
 }
