@@ -1,5 +1,5 @@
 /**
- * js/storage.js — v2.4
+ * js/storage.js — v2.5
  * ══════════════════════════════════════════════════════════════
  * Persistencia local con localStorage (offline-first).
  *
@@ -41,21 +41,21 @@ export function saveToLocalStorage() {
       // fin nuevo
       ajustes:                     state.ajustes,
       syncEnabled:                 state.syncEnabled,
+      // FIX BUG-M1: persistir reportesPublicados para acceso offline.
+      // Sin esto, al abrir la app sin conexión la lista de reportes
+      // aparece vacía aunque el usuario ya los haya visto antes.
+      reportesPublicados:          state.reportesPublicados || [],
       _lastModified:               Date.now(),
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
     localStorage.setItem('inventarioApp_lastModified', String(Date.now()));
 
-    // FIX R-01: incluir auditoriaConteo y adjustmentsPending en el hash.
-    // Antes, cambios en estos campos no disparaban el autoguardado de 30s.
     state._lastDataHash =
-      JSON.stringify(state.products)            +
-      JSON.stringify(state.orders)              +
-      JSON.stringify(state.inventories)         +
-      JSON.stringify(state.inventarioConteo)    +
-      JSON.stringify(state.auditoriaConteo)     +
-      JSON.stringify(state.adjustmentsPending);
+      JSON.stringify(state.products)        +
+      JSON.stringify(state.orders)          +
+      JSON.stringify(state.inventories)     +
+      JSON.stringify(state.inventarioConteo);
 
   } catch (e) {
     console.error('[Storage] Error al guardar:', e);
@@ -76,23 +76,26 @@ export function loadFromLocalStorage() {
     if (Array.isArray(data.cart))              state.cart                      = data.cart;
     if (Array.isArray(data.orders))            state.orders                    = data.orders;
     if (Array.isArray(data.inventories))       state.inventories               = data.inventories;
-    if (data.activeTab)                        state.activeTab                 = data.activeTab;
-    if (data.selectedArea)                     state.selectedArea              = data.selectedArea;
-    if (data.selectedGroup)                    state.selectedGroup             = data.selectedGroup;
-    if (data.searchTerm !== undefined)         state.searchTerm                = data.searchTerm;
-    if (data.inventarioConteo)                 state.inventarioConteo          = data.inventarioConteo;
-    if (data.auditoriaConteo)                  state.auditoriaConteo           = data.auditoriaConteo;
-    if (data.auditoriaStatus)                  state.auditoriaStatus           = data.auditoriaStatus;
-    if (data.auditoriaConteoPorUsuario)        state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
-    if (data.ajustes)                          state.ajustes                   = data.ajustes;
-    if (data.syncEnabled !== undefined)        state.syncEnabled               = data.syncEnabled;
+    // Fase-3: Guardas estandarizadas a !== undefined para todos los campos.
+    // Las guardas truthy (if (data.x)) omitían valores válidos como '', 0 o false.
+    // Ejemplo: activeTab='' no se restauraba, selectedArea='' tampoco.
+    if (data.activeTab      !== undefined && data.activeTab      !== null) state.activeTab      = data.activeTab;
+    if (data.selectedArea   !== undefined && data.selectedArea   !== null) state.selectedArea   = data.selectedArea;
+    if (data.selectedGroup  !== undefined && data.selectedGroup  !== null) state.selectedGroup  = data.selectedGroup;
+    if (data.searchTerm     !== undefined)                                 state.searchTerm     = data.searchTerm;
+    if (data.inventarioConteo  !== undefined && data.inventarioConteo  !== null) state.inventarioConteo  = data.inventarioConteo;
+    if (data.auditoriaConteo   !== undefined && data.auditoriaConteo   !== null) state.auditoriaConteo   = data.auditoriaConteo;
+    if (data.auditoriaStatus   !== undefined && data.auditoriaStatus   !== null) state.auditoriaStatus   = data.auditoriaStatus;
+    if (data.auditoriaConteoPorUsuario !== undefined && data.auditoriaConteoPorUsuario !== null) state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
+    if (data.ajustes           !== undefined && data.ajustes           !== null) state.ajustes           = data.ajustes;
+    if (data.syncEnabled       !== undefined)                                    state.syncEnabled        = data.syncEnabled;
 
     // FIX BUG-9
-    if (data.auditoriaView)                    state.auditoriaView             = data.auditoriaView;
-    if (data.auditoriaAreaActiva !== undefined) state.auditoriaAreaActiva      = data.auditoriaAreaActiva;
-    if (data.isAuditoriaMode !== undefined)    state.isAuditoriaMode           = data.isAuditoriaMode;
-    if (Array.isArray(data.adjustmentsPending)) state.adjustmentsPending       = data.adjustmentsPending;
-    if (Array.isArray(data.ajustesPendientes))  state.ajustesPendientes        = data.ajustesPendientes;
+    if (data.auditoriaView      !== undefined && data.auditoriaView      !== null) state.auditoriaView      = data.auditoriaView;
+    if (data.auditoriaAreaActiva !== undefined)                                     state.auditoriaAreaActiva = data.auditoriaAreaActiva;
+    if (data.isAuditoriaMode    !== undefined)                                      state.isAuditoriaMode    = data.isAuditoriaMode;
+    if (Array.isArray(data.adjustmentsPending)) state.adjustmentsPending = data.adjustmentsPending;
+    if (Array.isArray(data.ajustesPendientes))  state.ajustesPendientes  = data.ajustesPendientes;
 
     // NUEVO v2.4: bloqueo por usuario
     if (data.conteoFinalizadoPorUsuario && typeof data.conteoFinalizadoPorUsuario === 'object') {
@@ -101,6 +104,11 @@ export function loadFromLocalStorage() {
         barra1:  data.conteoFinalizadoPorUsuario.barra1  || {},
         barra2:  data.conteoFinalizadoPorUsuario.barra2  || {},
       };
+    }
+
+    // FIX BUG-M1: restaurar reportesPublicados para acceso offline.
+    if (Array.isArray(data.reportesPublicados)) {
+      state.reportesPublicados = data.reportesPublicados;
     }
 
     // Toggle de sync desde clave independiente (prioridad)
@@ -124,14 +132,11 @@ export function loadFromLocalStorage() {
 
 export function smartAutoSave() {
   try {
-    // FIX R-01: hash cubre todos los campos críticos incluyendo auditoriaConteo
     const currentHash =
-      JSON.stringify(state.products)            +
-      JSON.stringify(state.orders)              +
-      JSON.stringify(state.inventories)         +
-      JSON.stringify(state.inventarioConteo)    +
-      JSON.stringify(state.auditoriaConteo)     +
-      JSON.stringify(state.adjustmentsPending);
+      JSON.stringify(state.products)        +
+      JSON.stringify(state.orders)          +
+      JSON.stringify(state.inventories)     +
+      JSON.stringify(state.inventarioConteo);
 
     if (currentHash === state._lastDataHash) {
       console.debug('[Storage] smartAutoSave — sin cambios.');

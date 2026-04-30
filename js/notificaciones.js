@@ -134,12 +134,25 @@ export function suscribirNotificaciones() {
             .orderBy('fecha', 'desc')
             .limit(50);
     } else {
-        // Firestore no permite OR en where; usamos la colección completa y filtramos en cliente
-        // para mantener compatibilidad con el plan Spark (sin índices compuestos)
+        // FIX BUG-C2: Filtrar en SERVIDOR con el operador 'in'.
+        //
+        // ANTES: se obtenían TODOS los docs del docId y se filtraba en cliente.
+        // Firestore evalúa allow read en cada doc durante la query — si existe
+        // una notificación de otro usuario con el mismo docId, la query ENTERA
+        // falla con permission-denied. En entornos multi-bartender esto ocurre
+        // casi siempre (el admin envía notificaciones, los bartenders las ven
+        // junto con los docs ajenos → denegado).
+        //
+        // AHORA: .where('usuarioId', 'in', [myId, 'broadcast']) garantiza que
+        // Firestore solo devuelve docs que el usuario puede leer según las rules.
+        // El operador 'in' admite hasta 10 valores; con 2 estamos muy dentro del límite.
+        // Requiere el índice compuesto: { docId ASC, usuarioId ASC, fecha DESC }
+        // → ver firestore.indexes.json.
         query = window._db.collection('notificaciones')
             .where('docId', '==', window.FIRESTORE_DOC_ID)
+            .where('usuarioId', 'in', [myId, 'broadcast'])
             .orderBy('fecha', 'desc')
-            .limit(100);
+            .limit(50);
     }
 
     const unsub = query.onSnapshot(
@@ -147,10 +160,9 @@ export function suscribirNotificaciones() {
             const all = [];
             snap.forEach(doc => all.push({ _id: doc.id, ...doc.data() }));
 
-            // Filtrar para usuarios: solo las propias + broadcasts
-            state.notifications = isAdm
-                ? all
-                : all.filter(n => n.usuarioId === myId || n.usuarioId === 'broadcast');
+            // El snapshot ya solo contiene docs del usuario + broadcasts (filtrado en servidor).
+            // Para admin se deja all sin filtrar; para user el filtro ya aplicó en la query.
+            state.notifications = all;
 
             _recalcUnread();
             _updateBadge();

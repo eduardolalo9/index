@@ -156,16 +156,21 @@ export async function publicarReporte(titulo = '') {
                 const sumEnteras = usuarios.reduce((s, u) => s + (u.enteras || 0), 0);
                 enteras = Math.round(sumEnteras / usuarios.length);
 
-                // Suma total de oz (todas las botellas abiertas de todos los usuarios)
-                totalOzArea = 0;
-                abiertasCount = 0;
-                usuarios.forEach(u => {
-                    if (Array.isArray(u.abiertas)) {
-                        abiertasCount += u.abiertas.length;
-                        totalOzArea   += u.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0);
-                    }
-                });
-                totalOzArea = Math.round(totalOzArea * 100) / 100;
+                // FIX BUG-C1: PROMEDIO de oz abiertas entre bartenders.
+                // ANTES: se acumulaban los oz de todos los usuarios → duplicación
+                // de botellas físicas cuando varios bartenders contaban las mismas.
+                // AHORA: promedio de la suma de oz por usuario → valor consensuado.
+                const userOzSums = usuarios.map(u =>
+                    Array.isArray(u.abiertas)
+                        ? u.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0)
+                        : 0
+                );
+                abiertasCount = usuarios.reduce((s, u) =>
+                    s + (Array.isArray(u.abiertas) ? u.abiertas.length : 0), 0
+                );
+                totalOzArea = userOzSums.length > 0
+                    ? Math.round((userOzSums.reduce((a, b) => a + b, 0) / userOzSums.length) * 100) / 100
+                    : 0;
             } else {
                 // Fallback: auditoriaConteo del dispositivo local
                 const c    = state.auditoriaConteo[p.id]?.[area] || {};

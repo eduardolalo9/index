@@ -158,9 +158,13 @@ async function deleteAllProducts() {
   if (state.userRole !== 'admin') return;
   const ok = await showConfirm('⚠️ ¿Eliminar TODOS los productos?\nEsta acción no se puede deshacer.');
   if (!ok) return;
-  state.products = [];
-  state.inventarioConteo = {};
-  state.auditoriaConteo  = {};
+  state.products                   = [];
+  state.inventarioConteo           = {};
+  state.auditoriaConteo            = {};
+  // FIX BUG-A1: limpiar también los mapas multi-usuario para que los bartenders
+  // no aparezcan bloqueados en el siguiente ciclo sin haber contado nada.
+  state.auditoriaConteoPorUsuario  = {};
+  state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
   _commit();
 }
 
@@ -261,10 +265,10 @@ function createOrder() {
 
   const lines = [
     `📦 *PEDIDO BarInventory*`,
-    `Proveedor: ${order.supplier}`,
-    `Fecha: ${order.date} ${order.time}`,
+    `🏪 Proveedor: ${order.supplier}`,
+    `📅 Fecha: ${order.date} ${order.time}`,
     deliveryDate ? `Entrega: ${deliveryDate}` : null,
-    note ? `Nota: ${note}` : null,
+    note ? `📝 Nota: ${note}` : null,
     ``,
     ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
     ``,
@@ -283,8 +287,8 @@ function shareOrderWhatsApp(orderId) {
   if (!order) return;
   const lines = [
     `📦 *PEDIDO BarInventory* (Reenvío)`,
-    `Proveedor: ${order.supplier}`,
-    `Fecha original: ${order.date} ${order.time}`,
+    `🏪 Proveedor: ${order.supplier}`,
+    `📅 Fecha original: ${order.date} ${order.time}`,
     ``,
     ...order.products.map(p => `• ${p.name} (${p.unit}): *${_fmtQty(p.quantity)}*`),
     ``,
@@ -514,14 +518,12 @@ async function resetAllInventario() {
   const ok = await showConfirm('⚠️ ¿Resetear TODO el inventario a cero?\nSe perderán todos los conteos actuales.');
   if (!ok) return;
   state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
-  state.inventarioConteo = {};
-  state.auditoriaConteo  = {};
-  // FIX R-02: limpiar también datos de auditoría multi-usuario.
-  // Antes, el panel del admin seguía mostrando a los bartenders como
-  // "Finalizados" con conteos del ciclo anterior después del reset.
+  state.inventarioConteo           = {};
+  state.auditoriaConteo            = {};
+  // FIX BUG-A1: limpiar también los mapas multi-usuario para que los bartenders
+  // no aparezcan bloqueados en el siguiente ciclo sin haber contado nada.
   state.auditoriaConteoPorUsuario  = {};
   state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
-  state.auditoriaStatus            = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
   _commit();
   showNotification('✅ Inventario reseteado');
 }
@@ -629,14 +631,19 @@ function exportarAuditoriaExcel() {
           const sumEnteras  = usuarios.reduce((s, u) => s + (u.enteras || 0), 0);
           enteras = Math.round(sumEnteras / usuarios.length);
 
-          // Suma total de oz abiertas (todos los usuarios, todas sus botellas)
-          totalOzAbiertas = 0;
-          usuarios.forEach(u => {
-            if (Array.isArray(u.abiertas)) {
-              totalOzAbiertas += u.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0);
-            }
-          });
-          totalOzAbiertas = Math.round(totalOzAbiertas * 100) / 100;
+          // FIX BUG-C1: PROMEDIO de oz abiertas entre bartenders.
+          // ANTES: se sumaban los oz de todos los usuarios → si 3 bartenders medían
+          // la misma botella a 45oz, el Excel reportaba 135oz (3× el valor real).
+          // AHORA: cada usuario aporta 1 valor (la suma de sus oz de abiertas),
+          // y se promedia entre todos los usuarios → resultado consensuado correcto.
+          const userOzSums = usuarios.map(u =>
+            Array.isArray(u.abiertas)
+              ? u.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0)
+              : 0
+          );
+          totalOzAbiertas = userOzSums.length > 0
+            ? Math.round((userOzSums.reduce((a, b) => a + b, 0) / userOzSums.length) * 100) / 100
+            : 0;
 
           // Total consolidado via calcularTotalMultiUsuario
           total = parseFloat((calcularTotalMultiUsuario(p.id, area) || 0).toFixed(4));

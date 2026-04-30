@@ -346,14 +346,17 @@ function _safeStartListeners() {
         console.debug(`${LOG_PREFIX} Listeners ya activos — omitiendo.`);
         return;
     }
-    _listenersStarted = true;
-
+    // FIX BUG-M3: _listenersStarted se fija DESPUÉS del try.
+    // ANTES: se ponía en true antes del try — si startRealtimeListeners() lanzaba,
+    // el flag quedaba en true y ninguna llamada posterior podía reintentar el inicio.
+    // AHORA: solo se fija si la llamada no lanza.
     try {
         startRealtimeListeners();
+        _listenersStarted = true; // ← solo si no lanzó
         console.debug(`${LOG_PREFIX} Listeners de datos iniciados.`);
     } catch (err) {
         console.error(`${LOG_PREFIX} Error iniciando listeners:`, err);
-        _listenersStarted = false;
+        // _listenersStarted queda false → _safeStartListeners() puede reintentarse
     }
 }
 

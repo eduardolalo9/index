@@ -167,8 +167,13 @@ window.addEventListener('DOMContentLoaded', () => {
       // Solo se aplica en el primer arranque (cuando _appInitialized es false).
       if (!_appInitialized) {
         const urlTab = new URLSearchParams(window.location.search).get('tab');
-        const VALID_TABS = ['inicio', 'inventario', 'productos', 'auditoria',
-                            'pedidos', 'reportes', 'ajustes', 'notificaciones'];
+        // FIX BUG-C3: VALID_TABS alineado con los case en render.js switch.
+        // ANTES: incluía 'auditoria' y 'reportes' que NO tienen case en render.js
+        // → el default los capturaba y sobreescribía activeTab a 'inicio'.
+        // ANTES: excluía 'historia' que SÍ tiene case en render.js.
+        // AHORA: lista exacta de los 7 case presentes en renderTab().
+        const VALID_TABS = ['inicio', 'inventario', 'productos', 'pedidos',
+                            'historia', 'ajustes', 'notificaciones'];
         if (urlTab && VALID_TABS.includes(urlTab)) {
           console.info(`[App] Shortcut PWA → tab: ${urlTab}`);
           switchTab(urlTab);

@@ -61,6 +61,9 @@ export function renderTab() {
       console.warn('[Render] Tab desconocido:', state.activeTab, '— mostrando inicio.');
       state.activeTab = 'inicio';
       content.innerHTML = renderInicioTab();
+      // FIX BUG-M2: guardar activeTab='inicio' inmediatamente para que una recarga
+      // no vuelva a intentar renderizar el tab inválido en bucle.
+      try { saveToLocalStorage(); } catch (_) {}
       break;
   }
 
