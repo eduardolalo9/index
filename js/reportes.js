@@ -152,32 +152,45 @@ export async function publicarReporte(titulo = '') {
             let enteras, abiertasCount, totalOzArea;
 
             if (usuarios.length > 0) {
-                // Promedio de enteras (redondeado)
+                // ── Ruta multi-usuario ─────────────────────────────────
+                // Promedio de enteras (redondeado al entero)
                 const sumEnteras = usuarios.reduce((s, u) => s + (u.enteras || 0), 0);
                 enteras = Math.round(sumEnteras / usuarios.length);
 
-                // FIX BUG-C1: PROMEDIO de oz abiertas entre bartenders.
-                // ANTES: se acumulaban los oz de todos los usuarios → duplicación
-                // de botellas físicas cuando varios bartenders contaban las mismas.
-                // AHORA: promedio de la suma de oz por usuario → valor consensuado.
+                // FIX BUG-1 (CRÍTICO — oz duplicadas en reporte):
+                // ANTES: sumaba los oz de TODOS los usuarios → con 2 bartenders
+                //   midiendo la misma botella a 45oz → 90oz en lugar de 45oz.
+                // AHORA: calcula la suma de oz de cada usuario POR SEPARADO y
+                //   promedia esas sumas. Resultado: valor consensuado correcto.
                 const userOzSums = usuarios.map(u =>
                     Array.isArray(u.abiertas)
                         ? u.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0)
                         : 0
                 );
-                abiertasCount = usuarios.reduce((s, u) =>
-                    s + (Array.isArray(u.abiertas) ? u.abiertas.length : 0), 0
+                abiertasCount = Math.round(
+                    usuarios.reduce((s, u) =>
+                        s + (Array.isArray(u.abiertas) ? u.abiertas.length : 0), 0
+                    ) / usuarios.length
                 );
                 totalOzArea = userOzSums.length > 0
                     ? Math.round((userOzSums.reduce((a, b) => a + b, 0) / userOzSums.length) * 100) / 100
                     : 0;
+
             } else {
-                // Fallback: auditoriaConteo del dispositivo local
-                const c    = state.auditoriaConteo[p.id]?.[area] || {};
-                enteras    = c.enteras || 0;
-                const abArr = Array.isArray(c.abiertas) ? c.abiertas : [];
+                // ── Fallback: sin datos por usuario ───────────────────
+                // FIX BUG-2 (encadenado): auditoriaConteo[p.id][area].enteras puede
+                // estar contaminado con la SUMA de todos los bartenders (lo sobreescribía
+                // _applyConteoAreaData con el totalEnteras de Firestore).
+                // AHORA: _applyConteoAreaData ya no sobreescribe .enteras (fix en sync.js),
+                // así que este fallback es seguro. Si el área no fue contada en este dispositivo,
+                // muestra 0 — es mejor que mostrar un valor sumado incorrecto.
+                const c       = state.auditoriaConteo[p.id]?.[area] || {};
+                enteras       = c.enteras || 0;
+                const abArr   = Array.isArray(c.abiertas) ? c.abiertas : [];
                 abiertasCount = abArr.length;
-                totalOzArea   = Math.round(abArr.reduce((s, v) => s + (parseFloat(v) || 0), 0) * 100) / 100;
+                totalOzArea   = Math.round(
+                    abArr.reduce((s, v) => s + (parseFloat(v) || 0), 0) * 100
+                ) / 100;
             }
 
             // Total consolidado (usa calcularTotalMultiUsuario si hay multi-usuario,

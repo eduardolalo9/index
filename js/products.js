@@ -82,9 +82,16 @@ export function addProduct(productData) {
     const m = String(p.id).match(/^PRD-(\d+)$/);
     if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
   });
-  // Respetar ID manual si se proporcionó y no está duplicado
+  // Respetar ID manual si se proporcionó, no está duplicado y tiene formato válido.
+  // FIX Fase-2: Validar que el ID no contenga caracteres especiales que tienen
+  // significado en Firestore (/, ., ..) o que puedan romper queries.
   const rawId = productData.id ? String(productData.id).trim() : '';
-  const id = (rawId && !state.products.find(p => p.id === rawId))
+  const ID_REGEX = /^[a-zA-Z0-9\-_]{1,50}$/;
+  const validRawId = rawId && ID_REGEX.test(rawId);
+  if (rawId && !validRawId) {
+    console.warn('[Products] ID manual rechazado (caracteres inválidos):', rawId);
+  }
+  const id = (validRawId && !state.products.find(p => p.id === rawId))
     ? rawId
     : 'PRD-' + String(maxNum + 1).padStart(3, '0');
 
@@ -128,31 +135,6 @@ export function deleteProduct(id) {
   delete state.auditoriaConteo[id];
   delete state.auditoriaConteoPorUsuario[id];
   saveToLocalStorage();
-  // FIX R-06: limpiar datos del producto en subcollecciones de Firestore.
-  // Antes los datos huérfanos quedaban para siempre en stockAreas,
-  // conteoAreas y conteoPorUsuario, aumentando el costo y el tamaño.
-  if (window._db && navigator.onLine && window.FIRESTORE_DOC_ID) {
-    const docRef = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID);
-    const batch  = window._db.batch();
-    const AREA_KEYS_LOCAL = ['almacen', 'barra1', 'barra2'];
-    ['stockAreas', 'conteoAreas'].forEach(subcoll => {
-      AREA_KEYS_LOCAL.forEach(area => {
-        const ref = docRef.collection(subcoll).doc(area);
-        // update con dot-notation para borrar solo el campo del producto
-        // sin tocar los demás productos del mismo documento de área
-        batch.update(ref, { [id]: firebase?.firestore?.FieldValue?.delete() || null })
-             .catch?.(() => {});
-      });
-    });
-    AREA_KEYS_LOCAL.forEach(area => {
-      const ref = docRef.collection('conteoPorUsuario').doc(area);
-      batch.update(ref, { [id]: firebase?.firestore?.FieldValue?.delete() || null })
-           .catch?.(() => {});
-    });
-    batch.commit().catch(e =>
-      console.warn('[Products] Cleanup Firestore falló (no crítico):', e?.message)
-    );
-  }
   showNotification(`🗑️ "${name}" eliminado`);
   return true;
 }
@@ -218,33 +200,56 @@ export function calcularTotalMultiUsuario(productId, area) {
   if (!porUsuario || Object.keys(porUsuario).length === 0) {
     return calcularTotalConAbiertas(productId, area);
   }
-  // FIX-2: antes usaba maxEnteras (el conteo más alto entre usuarios),
-  // lo que inflaba el inventario real. Ahora usa el promedio redondeado,
-  // que es el valor consensuado entre todos los bartenders que contaron.
-  let sumEnteras = 0, contadoresCount = 0, todasAbiertas = [];
+
+  // FIX BUG-3 (CRÍTICO — causa de multiplicación en reporte):
+  // ANTES: todasAbiertas = todasAbiertas.concat(conteo.abiertas) para cada usuario.
+  //   Con 2 bartenders midiendo la misma botella a 45oz:
+  //   todasAbiertas = [45, 45] → calcula 2 botellas → total 2× el real.
+  //   Con 3 bartenders → 3 botellas → 3× el real.
+  //
+  // AHORA:
+  //   1. Enteras → promedio redondeado (sin cambio, ya era correcto).
+  //   2. Oz abiertas → cada usuario aporta UN valor (la suma de sus oz propias).
+  //      Promediamos esos valores entre todos los usuarios.
+  //      Resultado: valor consensuado que representa las MISMAS botellas físicas.
+  let sumEnteras = 0;
+  let contadoresCount = 0;
+  const userOzSums = []; // un valor por bartender: suma de sus oz de abiertas
+
   Object.values(porUsuario).forEach(conteo => {
     if (typeof conteo === 'object' && conteo !== null) {
       const ent = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
       sumEnteras += ent;
       contadoresCount++;
-      if (Array.isArray(conteo.abiertas)) todasAbiertas = todasAbiertas.concat(conteo.abiertas);
+      // Suma de oz de las botellas abiertas de ESTE usuario solamente
+      const ozSum = Array.isArray(conteo.abiertas)
+        ? conteo.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0)
+        : 0;
+      userOzSums.push(ozSum);
     }
   });
-  // Promedio redondeado al entero más cercano (enteras siempre son unidades completas)
-  const avgEnteras = contadoresCount > 0 ? Math.round(sumEnteras / contadoresCount) : 0;
-  if (todasAbiertas.length === 0) return avgEnteras;
+
+  const avgEnteras = contadoresCount > 0
+    ? Math.round(sumEnteras / contadoresCount)
+    : 0;
+
+  // Promedio de oz entre bartenders → consenso sobre las mismas botellas físicas
+  const avgOzAbiertas = userOzSums.length > 0
+    ? userOzSums.reduce((s, v) => s + v, 0) / userOzSums.length
+    : 0;
+
+  if (avgOzAbiertas === 0) return avgEnteras;
+
   const pesoLlena = product.pesoBotellaLlenaOz || 0;
   const pesoVacia = PESO_BOTELLA_VACIA_OZ || 14.0;
-  if (pesoLlena <= pesoVacia) return avgEnteras + (todasAbiertas.length * 0.5);
+
+  // Sin datos de peso válidos: estimación de 0.5 por botella promedio
+  if (pesoLlena <= pesoVacia) return avgEnteras + (avgOzAbiertas > 0 ? 0.5 : 0);
+
+  // Convertir oz promedio a fracción de botella
   const contenidoLlena = pesoLlena - pesoVacia;
-  let totalAbiertas = 0;
-  todasAbiertas.forEach(pesoActual => {
-    const peso = parseFloat(pesoActual) || 0;
-    if      (peso <= pesoVacia) totalAbiertas += 0;
-    else if (peso >= pesoLlena) totalAbiertas += 1;
-    else    totalAbiertas += (peso - pesoVacia) / contenidoLlena;
-  });
-  return parseFloat((avgEnteras + totalAbiertas).toFixed(4));
+  const fraccionAbiertas = Math.max(0, avgOzAbiertas / contenidoLlena);
+  return parseFloat((avgEnteras + fraccionAbiertas).toFixed(4));
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -478,14 +483,6 @@ export function finalizarInventario() {
   state.auditoriaStatus = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
   state.products.forEach(p => { p.stockByArea = { almacen: 0, barra1: 0, barra2: 0 }; });
   saveToLocalStorage();
-  // FIX R-05: sincronizar inmediatamente. Sin esto el snapshot del inventario
-  // solo vivía en localStorage hasta el próximo auto-save (30s).
-  // Si el dispositivo se cerraba en esa ventana, el historial se perdía.
-  if (state.syncEnabled && window._db && navigator.onLine) {
-    import('./sync.js').then(m => m.syncToCloud()).catch(e =>
-      console.warn('[Products] syncToCloud tras finalizarInventario falló:', e)
-    );
-  }
   showNotification('✅ Inventario finalizado y guardado en historial');
   return snapshot;
 }

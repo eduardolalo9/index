@@ -105,53 +105,29 @@ async function _writeChunkedSubcollection(docRef, subcollName, dataArray) {
     const colRef      = docRef.collection(subcollName);
     const totalChunks = Math.max(1, Math.ceil(dataArray.length / MAX_CHUNK_SIZE));
 
-    // FIX R-04: señalar al doc principal que una escritura está en progreso.
-    // _applyMainDocData respetará este flag y no leerá inventories en la
-    // ventana entre los dos batches (~200ms), evitando que otros dispositivos
-    // vean state.inventories = [] temporalmente.
-    const mainRef = window._db.collection('inventarioApp').doc(window.FIRESTORE_DOC_ID);
-    try { await mainRef.update({ _inventoriesWriting: true }); } catch (_) {}
-
-    try {
-        const writeBatch = window._db.batch();
-        for (let i = 0; i < totalChunks; i++) {
-            writeBatch.set(colRef.doc('new_chunk_' + i), {
-                items:       dataArray.slice(i * MAX_CHUNK_SIZE, (i + 1) * MAX_CHUNK_SIZE),
-                chunkIndex:  i,
-                totalChunks: totalChunks,
-                _updatedAt:  Date.now(),
-            });
-        }
-        await writeBatch.commit();
-
-        const existingSnap = await colRef.get();
-        const cleanBatch   = window._db.batch();
-
-        // FIX R-08: hacer explícito el orden de operaciones en cleanBatch.
-        // Antes dependía implícitamente de que 'chunk_N' < 'new_chunk_N'
-        // alfabéticamente para que el delete fuera antes del set en el mismo
-        // batch. Ahora separamos los documentos en dos grupos explícitos:
-        // primero borramos los viejos (chunk_N), luego renombramos los nuevos.
-        const oldDocs = [];
-        const newDocs = [];
-        existingSnap.forEach(d => {
-            if (d.id.startsWith('new_')) newDocs.push(d);
-            else                         oldDocs.push(d);
+    const writeBatch = window._db.batch();
+    for (let i = 0; i < totalChunks; i++) {
+        writeBatch.set(colRef.doc('new_chunk_' + i), {
+            items:       dataArray.slice(i * MAX_CHUNK_SIZE, (i + 1) * MAX_CHUNK_SIZE),
+            chunkIndex:  i,
+            totalChunks: totalChunks,
+            _updatedAt:  Date.now(),
         });
-        // 1. Borrar docs viejos
-        oldDocs.forEach(d => cleanBatch.delete(d.ref));
-        // 2. Renombrar new_chunk_N → chunk_N y borrar el transitorio
-        newDocs.forEach(d => {
+    }
+    await writeBatch.commit();
+
+    const existingSnap = await colRef.get();
+    const cleanBatch   = window._db.batch();
+    existingSnap.forEach(d => {
+        if (d.id.startsWith('new_')) {
             cleanBatch.set(colRef.doc(d.id.replace('new_', '')), d.data());
             cleanBatch.delete(d.ref);
-        });
-
-        if (!existingSnap.empty) await cleanBatch.commit();
-        console.info(`[Firebase][Chunk] ${subcollName} → ${totalChunks} chunk(s) escritos.`);
-    } finally {
-        // Siempre limpiar el flag, incluso si hubo error
-        try { await mainRef.update({ _inventoriesWriting: false }); } catch (_) {}
-    }
+        } else {
+            cleanBatch.delete(d.ref);
+        }
+    });
+    if (!existingSnap.empty) await cleanBatch.commit();
+    console.info(`[Firebase][Chunk] ${subcollName} → ${totalChunks} chunk(s) escritos.`);
 }
 
 async function _readChunkedSubcollection(docRef, subcollName) {
@@ -301,17 +277,25 @@ async function _applyMainDocData(data) {
     if (Array.isArray(data.products))  state.products        = data.products;
     if (Array.isArray(data.cart))      state.cart            = data.cart;
     // FIX BUG-7: NO aplicar activeTab ni selectedArea desde la nube.
-    // Hacerlo cambia la pestaña activa del usuario en tiempo real cuando otro
-    // dispositivo sincroniza — comportamiento no deseado y confuso.
-    // Cada dispositivo mantiene su propia navegación local.
     // if (data.activeTab)             state.activeTab       = data.activeTab;   ← REMOVIDO
     // if (data.selectedArea)          state.selectedArea    = data.selectedArea; ← REMOVIDO
-    // FIX R-04: si _inventoriesWriting es true, otro dispositivo está en la
-    // ventana entre los dos batches de _writeChunkedSubcollection.
-    // No leer inventories ahora — el siguiente snapshot llegará con datos completos.
-    if (data._inventoriesWriting === true) {
-        console.debug("[Snapshot] _inventoriesWriting activo — skip inventories.");
+
+    // ── Detección de reset de auditoría iniciado por el admin ──
+    // Si _resetCicloTs es más nuevo que el local, el admin inició un nuevo ciclo.
+    // Llamamos applyRemoteReset() en audit.js para limpiar el estado local
+    // de este dispositivo (conteos, locks, statuses) sin tocar Firestore.
+    const cloudResetTs = data._resetCicloTs || 0;
+    const localResetTs = parseInt(localStorage.getItem('inventarioApp_resetCicloTs') || '0', 10);
+    if (cloudResetTs > 0 && cloudResetTs > localResetTs) {
+        localStorage.setItem('inventarioApp_resetCicloTs', String(cloudResetTs));
+        console.info('[Snapshot] _resetCicloTs nuevo detectado — aplicando reset remoto de auditoría.');
+        import('./audit.js').then(m => {
+            if (typeof m.applyRemoteReset === 'function') m.applyRemoteReset();
+        }).catch(e => console.warn('[Snapshot] applyRemoteReset falló:', e));
+        // Salir temprano — applyRemoteReset ya maneja el render
+        return;
     }
+
     if (data.auditoriaConteo)          state.auditoriaConteo = data.auditoriaConteo;
 
     // "completada always wins" — ningún dispositivo puede re-abrir una zona
@@ -379,8 +363,24 @@ function _applyConteoAreaData(area, areaData) {
         } else {
             delete state.auditoriaConteo[p.id][area]._conflictoAbiertas;
         }
+
+        // FIX BUG-2 (CRÍTICO — causa de multiplicación en reporte):
+        // cloudEntry.enteras es la SUMA de todos los bartenders que contaron
+        // (calculada en syncConteoAtomicoPorArea como totalEnteras = sum(_userEntradas)).
+        // ANTES: se sobreescribía state.auditoriaConteo[p.id][area].enteras con esa suma.
+        //   Consecuencia: el dispositivo del admin tenía, por ejemplo, enteras=20 cuando
+        //   2 bartenders contaron 10 cada uno. La función calcularTotalConAbiertas y el
+        //   fallback de publicarReporte usaban ese valor sumado → reporte 2× inflado.
+        // AHORA: NO sobreescribimos .enteras (que representa el conteo propio del dispositivo).
+        //   Guardamos la suma en _cloudTotalEnteras para referencia (debugging/UI futura),
+        //   y guardamos el número de contadores en _totalContadores.
+        //   La consolidación correcta para reportes se hace SIEMPRE vía auditoriaConteoPorUsuario
+        //   (promediando enteras individuales), nunca vía auditoriaConteo.enteras.
         if (typeof cloudEntry.enteras === 'number') {
-            state.auditoriaConteo[p.id][area].enteras = cloudEntry.enteras;
+            state.auditoriaConteo[p.id][area]._cloudTotalEnteras = cloudEntry.enteras;
+        }
+        if (typeof cloudEntry._totalContadores === 'number') {
+            state.auditoriaConteo[p.id][area]._totalContadores = cloudEntry._totalContadores;
         }
     });
 }
