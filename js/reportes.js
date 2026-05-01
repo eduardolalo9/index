@@ -359,9 +359,11 @@ export function descargarReporteExcel(reporteId) {
         { wch: 14 }, { wch: 34 },
     ];
 
-    const sheetName = (reporte.titulo || 'Auditoría').slice(0, 31).replace(/[:\\/?*[\]]/g, '');
-    const wb        = window.XLSX.utils.book_new();
-    window.XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Auditoría');
+    // FIX Problema 1: el nombre de hoja siempre es 'Auditoría', no el título del reporte.
+    // Antes: sheetName derivaba del título → "Reporte 30/4/2026" → "Reporte 30-4-2026"
+    // Ahora: siempre 'Auditoría', igual que exportarAuditoriaExcel() en actions.js.
+    const wb = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, 'Auditoría');
 
     const fecha    = (reporte.fecha || new Date().toLocaleDateString('es-MX')).replace(/\//g, '-');
     const filename = `REPORTE_${(reporte.titulo || 'inventario').replace(/\s+/g, '_')}_${fecha}.xlsx`;

@@ -214,18 +214,20 @@ export function calcularTotalMultiUsuario(productId, area) {
   //      Resultado: valor consensuado que representa las MISMAS botellas físicas.
   let sumEnteras = 0;
   let contadoresCount = 0;
-  const userOzSums = []; // un valor por bartender: suma de sus oz de abiertas
+  const userOzSums    = []; // un valor por bartender: suma de sus oz de abiertas
+  const userCntSums   = []; // un valor por bartender: cantidad de botellas abiertas
 
   Object.values(porUsuario).forEach(conteo => {
     if (typeof conteo === 'object' && conteo !== null) {
       const ent = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
       sumEnteras += ent;
       contadoresCount++;
+      const abiertas = Array.isArray(conteo.abiertas) ? conteo.abiertas : [];
       // Suma de oz de las botellas abiertas de ESTE usuario solamente
-      const ozSum = Array.isArray(conteo.abiertas)
-        ? conteo.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0)
-        : 0;
+      const ozSum  = abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0);
       userOzSums.push(ozSum);
+      // Cantidad de botellas abiertas de ESTE usuario
+      userCntSums.push(abiertas.length);
     }
   });
 
@@ -246,9 +248,22 @@ export function calcularTotalMultiUsuario(productId, area) {
   // Sin datos de peso válidos: estimación de 0.5 por botella promedio
   if (pesoLlena <= pesoVacia) return avgEnteras + (avgOzAbiertas > 0 ? 0.5 : 0);
 
-  // Convertir oz promedio a fracción de botella
-  const contenidoLlena = pesoLlena - pesoVacia;
-  const fraccionAbiertas = Math.max(0, avgOzAbiertas / contenidoLlena);
+  // Promedio de conteo de botellas abiertas entre bartenders
+  const avgCountAbiertas = userCntSums.length > 0
+    ? userCntSums.reduce((s, v) => s + v, 0) / userCntSums.length
+    : 0;
+
+  // FIX BUG-C1: descontar pesoVacia por cada botella individual antes de dividir.
+  // ANTES: avgOzAbiertas / contenidoLlena  → trataba la suma como peso de 1 sola botella
+  //        Ej. 2 botellas (30+50=80oz, pesoVacia=14, contenido=41):
+  //        80/41 = 1.951 (sobreestima 54%)
+  // AHORA: (avgOzAbiertas - avgCountAbiertas * pesoVacia) / contenidoLlena
+  //        (80 - 2*14) / 41 = 52/41 = 1.268 ← correcto
+  const contenidoLlena  = pesoLlena - pesoVacia;
+  const fraccionAbiertas = Math.max(
+    0,
+    (avgOzAbiertas - avgCountAbiertas * pesoVacia) / contenidoLlena
+  );
   return parseFloat((avgEnteras + fraccionAbiertas).toFixed(4));
 }
 
