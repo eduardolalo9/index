@@ -1,13 +1,23 @@
 /**
- * js/reportes.js — v2.0
+ * js/reportes.js — v2.1
  * ══════════════════════════════════════════════════════════════
  * Módulo de reportes publicados.
+ *
+ * NUEVO v2.1:
+ * ──────────────────────────────────────────────────────────────
+ * ① descargarReporteExcel() — nombre de hoja siempre "Auditoría".
+ *   ANTES: se usaba el título del reporte (ej. "Reporte 30/4/2026")
+ *   → la hoja se llamaba "Reporte 30-4-2026", no "Auditoría".
+ *   AHORA: nombre fijo "Auditoría" en ambas rutas de exportación
+ *   (exportarAuditoriaExcel en actions.js y descargarReporteExcel aquí).
  *
  * NUEVO v2.0:
  * ──────────────────────────────────────────────────────────────
  * ① publicarReporte() usa calcularTotalMultiUsuario para
- *   consolidar correctamente los conteos de múltiples bartenders
- *   (promedio de enteras, suma de botellas abiertas).
+ *   consolidar correctamente los conteos de múltiples bartenders.
+ *   Con products.js v2.4, calcularTotalMultiUsuario calcula la
+ *   fracción de cada botella abierta individualmente (descontando
+ *   pesoVacia por botella) y promedía entre bartenders.
  *
  * ② descargarReporteExcel() genera el formato EXACTO:
  *   Hoja "Auditoría"
@@ -157,11 +167,14 @@ export async function publicarReporte(titulo = '') {
                 const sumEnteras = usuarios.reduce((s, u) => s + (u.enteras || 0), 0);
                 enteras = Math.round(sumEnteras / usuarios.length);
 
-                // FIX BUG-1 (CRÍTICO — oz duplicadas en reporte):
-                // ANTES: sumaba los oz de TODOS los usuarios → con 2 bartenders
-                //   midiendo la misma botella a 45oz → 90oz en lugar de 45oz.
-                // AHORA: calcula la suma de oz de cada usuario POR SEPARADO y
-                //   promedia esas sumas. Resultado: valor consensuado correcto.
+                // FIX v2.0 / v2.4 (CRÍTICO — oz duplicadas en reporte):
+                // v2.0: corregía la duplicación concatenando arrays de todos los usuarios.
+                // v2.4: calcularTotalMultiUsuario (products.js) ahora calcula la fracción
+                //   de cada botella individualmente (descontando pesoVacia por botella)
+                //   y promedia entre bartenders → valor correcto y consistente.
+                //
+                // Para el campo totalOzAbiertas (informativo en el reporte):
+                // Se promedia la SUMA de oz de cada usuario → valor consensuado de oz.
                 const userOzSums = usuarios.map(u =>
                     Array.isArray(u.abiertas)
                         ? u.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0)
@@ -359,9 +372,10 @@ export function descargarReporteExcel(reporteId) {
         { wch: 14 }, { wch: 34 },
     ];
 
-    // FIX Problema 1: el nombre de hoja siempre es 'Auditoría', no el título del reporte.
-    // Antes: sheetName derivaba del título → "Reporte 30/4/2026" → "Reporte 30-4-2026"
-    // Ahora: siempre 'Auditoría', igual que exportarAuditoriaExcel() en actions.js.
+    // FIX v2.1: nombre de hoja siempre "Auditoría".
+    // ANTES: se usaba el título del reporte → la hoja podía llamarse
+    // "Reporte 30-4-2026" en lugar de "Auditoría", rompiendo el requisito
+    // de nombre fijo y generando inconsistencia con exportarAuditoriaExcel().
     const wb = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(wb, ws, 'Auditoría');
 

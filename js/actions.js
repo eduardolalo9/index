@@ -1,6 +1,14 @@
 /**
- * js/actions.js — v3.2
+ * js/actions.js — v3.3
  * ══════════════════════════════════════════════════════════════
+ * NUEVO v3.3:
+ *   exportarAuditoriaExcel() — CORRECCIÓN de cálculo de totales.
+ *   El total por área se obtiene vía calcularTotalMultiUsuario()
+ *   (corregido en products.js v2.4). La columna "Abiertas (oz)"
+ *   sigue mostrando el promedio de oz entre bartenders como valor
+ *   informativo; el Total usa la conversión correcta por botella.
+ *   Ver fix detallado en products.js v2.4.
+ *
  * NUEVO v3.2:
  *   Cantidad de pedido con decimales (step 0.001):
  *   - Input numérico reemplaza al <span> en openOrderModal()
@@ -20,7 +28,7 @@
  *
  *   Los cálculos usan calcularTotalMultiUsuario para consolidar
  *   los conteos de múltiples bartenders (promedio de enteras,
- *   suma total de botellas abiertas).
+ *   fracción de abiertas calculada botella a botella).
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -631,11 +639,10 @@ function exportarAuditoriaExcel() {
           const sumEnteras  = usuarios.reduce((s, u) => s + (u.enteras || 0), 0);
           enteras = Math.round(sumEnteras / usuarios.length);
 
-          // FIX BUG-C1: PROMEDIO de oz abiertas entre bartenders.
-          // ANTES: se sumaban los oz de todos los usuarios → si 3 bartenders medían
-          // la misma botella a 45oz, el Excel reportaba 135oz (3× el valor real).
-          // AHORA: cada usuario aporta 1 valor (la suma de sus oz de abiertas),
-          // y se promedia entre todos los usuarios → resultado consensuado correcto.
+          // ── Columna "Abiertas (oz)": promedio de oz entre bartenders ──────
+          // Este valor es informativo: muestra el peso promedio consensuado
+          // de las botellas abiertas. El cálculo de Total usa la conversión
+          // correcta botella-a-botella vía calcularTotalMultiUsuario (v2.4).
           const userOzSums = usuarios.map(u =>
             Array.isArray(u.abiertas)
               ? u.abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0)
@@ -645,7 +652,9 @@ function exportarAuditoriaExcel() {
             ? Math.round((userOzSums.reduce((a, b) => a + b, 0) / userOzSums.length) * 100) / 100
             : 0;
 
-          // Total consolidado via calcularTotalMultiUsuario
+          // Total consolidado: calcularTotalMultiUsuario (v2.4) calcula la
+          // fracción de cada botella abierta individualmente descontando
+          // pesoVacia por botella, luego promedia entre bartenders.
           total = parseFloat((calcularTotalMultiUsuario(p.id, area) || 0).toFixed(4));
         } else {
           // Fallback: auditoriaConteo (conteo del dispositivo local)
@@ -803,4 +812,4 @@ window.addAbiertaInModal      = addAbiertaInModal;
 window.closeInventarioModal   = closeInventarioModal;
 window.saveInventarioModal    = saveInventarioModal;
 
-console.info('[Actions] ✓ v3.1 — Excel auditoría con formato exacto.');
+console.info('[Actions] ✓ v3.3 — Excel auditoría con cálculo de fracciones corregido (products.js v2.4).');

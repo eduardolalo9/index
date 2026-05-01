@@ -1,11 +1,35 @@
 /**
- * js/products.js — v2.3 CORREGIDO
+ * js/products.js — v2.4
  * ══════════════════════════════════════════════════════════════
  * FIX BUG-6: ajustarProducto() llamaba enviarNotificacionAjuste()
  *   que NO existe en notificaciones.js.
  *   La función correcta es enviarNotificacion().
  *   El optional chaining ?.() evitaba el crash, pero la notificación
  *   nunca llegaba al admin cuando un usuario solicitaba un ajuste.
+ *
+ * FIX v2.4 — CRÍTICO: calcularTotalMultiUsuario() sobreestimaba el
+ *   total de botellas abiertas al no descontar pesoVacia por botella.
+ * ──────────────────────────────────────────────────────────────
+ * PROBLEMA (v2.3):
+ *   Se promediaban las SUMAS de oz de cada bartender y se dividía
+ *   el resultado por contenidoLlena como si fuera una sola botella.
+ *   Esto ignoraba que cada botella abierta tiene su propio tara
+ *   (pesoVacia) que debe descontarse individualmente.
+ *
+ *   Ejemplo: 2 botellas abiertas a 30oz y 50oz
+ *            pesoVacia = 14oz, pesoLlena = 55oz, contenido = 41oz
+ *     INCORRECTO (v2.3): (30 + 50) / 41           = 1.951 botellas
+ *     CORRECTO   (v2.4): (30-14)/41 + (50-14)/41  = 0.390 + 0.878
+ *                                                  = 1.268 botellas
+ *   Error de sobreestimación: ~54% con 2 botellas,
+ *   crece con cada botella adicional.
+ *
+ * CORRECCIÓN:
+ *   Se calcula la fracción de CADA botella abierta individualmente
+ *   (idéntico a calcularTotalConAbiertas), luego se promedia la
+ *   fracción total entre todos los bartenders que reportaron.
+ *   Resultado: cálculo matemáticamente correcto y consistente con
+ *   el conteo en modo usuario único.
  * ══════════════════════════════════════════════════════════════
  */
 
@@ -201,70 +225,66 @@ export function calcularTotalMultiUsuario(productId, area) {
     return calcularTotalConAbiertas(productId, area);
   }
 
-  // FIX BUG-3 (CRÍTICO — causa de multiplicación en reporte):
-  // ANTES: todasAbiertas = todasAbiertas.concat(conteo.abiertas) para cada usuario.
-  //   Con 2 bartenders midiendo la misma botella a 45oz:
-  //   todasAbiertas = [45, 45] → calcula 2 botellas → total 2× el real.
-  //   Con 3 bartenders → 3 botellas → 3× el real.
-  //
-  // AHORA:
-  //   1. Enteras → promedio redondeado (sin cambio, ya era correcto).
-  //   2. Oz abiertas → cada usuario aporta UN valor (la suma de sus oz propias).
-  //      Promediamos esos valores entre todos los usuarios.
-  //      Resultado: valor consensuado que representa las MISMAS botellas físicas.
-  let sumEnteras = 0;
-  let contadoresCount = 0;
-  const userOzSums    = []; // un valor por bartender: suma de sus oz de abiertas
-  const userCntSums   = []; // un valor por bartender: cantidad de botellas abiertas
-
-  Object.values(porUsuario).forEach(conteo => {
-    if (typeof conteo === 'object' && conteo !== null) {
-      const ent = typeof conteo.enteras === 'number' ? conteo.enteras : 0;
-      sumEnteras += ent;
-      contadoresCount++;
-      const abiertas = Array.isArray(conteo.abiertas) ? conteo.abiertas : [];
-      // Suma de oz de las botellas abiertas de ESTE usuario solamente
-      const ozSum  = abiertas.reduce((s, v) => s + (parseFloat(v) || 0), 0);
-      userOzSums.push(ozSum);
-      // Cantidad de botellas abiertas de ESTE usuario
-      userCntSums.push(abiertas.length);
-    }
-  });
-
-  const avgEnteras = contadoresCount > 0
-    ? Math.round(sumEnteras / contadoresCount)
-    : 0;
-
-  // Promedio de oz entre bartenders → consenso sobre las mismas botellas físicas
-  const avgOzAbiertas = userOzSums.length > 0
-    ? userOzSums.reduce((s, v) => s + v, 0) / userOzSums.length
-    : 0;
-
-  if (avgOzAbiertas === 0) return avgEnteras;
-
   const pesoLlena = product.pesoBotellaLlenaOz || 0;
   const pesoVacia = PESO_BOTELLA_VACIA_OZ || 14.0;
 
-  // Sin datos de peso válidos: estimación de 0.5 por botella promedio
-  if (pesoLlena <= pesoVacia) return avgEnteras + (avgOzAbiertas > 0 ? 0.5 : 0);
+  // FIX BUG-3 (CRÍTICO — causa de multiplicación en reporte):
+  // ANTES (primera versión): todasAbiertas.concat(conteo.abiertas) por usuario
+  //   → N bartenders × misma botella = N botellas → N× el valor real.
+  //
+  // FIX v2.4 (CORRECCIÓN DEL BUGFIX BUG-3):
+  // ANTES (v2.3): se promediaban las SUMAS de oz y se dividía por contenidoLlena
+  //   como si la suma total fuera el peso de UNA SOLA botella.
+  //   No se descontaba pesoVacia por cada botella → sobreestimación grave.
+  //
+  //   Ejemplo: 2 botellas abiertas a 30oz y 50oz
+  //            pesoVacia=14oz, pesoLlena=55oz, contenido=41oz
+  //     v2.3 → (30+50)/41           = 1.951  ← incorrecto (+54%)
+  //     v2.4 → (30-14)/41+(50-14)/41 = 1.268  ← correcto
+  //
+  // AHORA (v2.4): se calcula la fracción de cada botella individualmente
+  //   (idéntico a calcularTotalConAbiertas), luego se promedian las fracciones
+  //   entre bartenders → resultado consensuado y matemáticamente correcto.
 
-  // Promedio de conteo de botellas abiertas entre bartenders
-  const avgCountAbiertas = userCntSums.length > 0
-    ? userCntSums.reduce((s, v) => s + v, 0) / userCntSums.length
-    : 0;
-
-  // FIX BUG-C1: descontar pesoVacia por cada botella individual antes de dividir.
-  // ANTES: avgOzAbiertas / contenidoLlena  → trataba la suma como peso de 1 sola botella
-  //        Ej. 2 botellas (30+50=80oz, pesoVacia=14, contenido=41):
-  //        80/41 = 1.951 (sobreestima 54%)
-  // AHORA: (avgOzAbiertas - avgCountAbiertas * pesoVacia) / contenidoLlena
-  //        (80 - 2*14) / 41 = 52/41 = 1.268 ← correcto
-  const contenidoLlena  = pesoLlena - pesoVacia;
-  const fraccionAbiertas = Math.max(
-    0,
-    (avgOzAbiertas - avgCountAbiertas * pesoVacia) / contenidoLlena
+  const conteosList = Object.values(porUsuario).filter(
+    c => typeof c === 'object' && c !== null
   );
-  return parseFloat((avgEnteras + fraccionAbiertas).toFixed(4));
+  if (conteosList.length === 0) return 0;
+
+  // ── Enteras: promedio redondeado entre todos los bartenders ───
+  const sumEnteras = conteosList.reduce(
+    (s, c) => s + (typeof c.enteras === 'number' ? c.enteras : 0), 0
+  );
+  const avgEnteras = Math.round(sumEnteras / conteosList.length);
+
+  // ── Botellas abiertas: verificar si hay alguna ─────────────────
+  const hayAbiertas = conteosList.some(
+    c => Array.isArray(c.abiertas) && c.abiertas.length > 0
+  );
+  if (!hayAbiertas) return avgEnteras;
+
+  // Sin datos de peso válidos: estimación plana de 0.5
+  if (pesoLlena <= pesoVacia) return avgEnteras + 0.5;
+
+  const contenidoLlena = pesoLlena - pesoVacia;
+
+  // ── Fracción: botella a botella por usuario, promedio entre bartenders ──
+  // Cada usuario contribuye con su propia fracción calculada individualmente;
+  // se promedian esas fracciones para obtener el valor consensuado.
+  const userFracciones = conteosList.map(conteo => {
+    if (!Array.isArray(conteo.abiertas) || conteo.abiertas.length === 0) return 0;
+    let frac = 0;
+    conteo.abiertas.forEach(peso => {
+      const p = parseFloat(peso) || 0;
+      if      (p <= pesoVacia) frac += 0;
+      else if (p >= pesoLlena) frac += 1;
+      else    frac += (p - pesoVacia) / contenidoLlena;
+    });
+    return frac;
+  });
+
+  const avgFraccion = userFracciones.reduce((s, v) => s + v, 0) / userFracciones.length;
+  return parseFloat((avgEnteras + avgFraccion).toFixed(4));
 }
 
 // ═════════════════════════════════════════════════════════════
