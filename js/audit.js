@@ -1,5 +1,5 @@
 /**
- * js/audit.js — v2.0 COMPLETO
+ * js/audit.js — v2.1
  * ══════════════════════════════════════════════════════════════
  * Auditoría Física Ciega — Conteo Multiusuario con Bloqueo por Usuario
  *
@@ -657,7 +657,15 @@ export async function reabrirConteoUsuario(userId, area) {
  * - Admin: borra TODO (conteos, locks, statuses) y notifica a usuarios.
  * - Usuario: solo resetea su conteo local no finalizado.
  */
-export function auditoriaResetear() {
+/**
+ * Reinicia toda la auditoría (ciclo nuevo).
+ *
+ * FIX BUG-2: Migrado de callback a patrón await (igual que auditoriaFinalizarConteo).
+ * ANTES: showConfirm(msg, async () => {...}) — showConfirm NO awaiteaba el callback
+ * async, por lo que cualquier error de Firestore era silencioso e imposible de capturar.
+ * AHORA: const confirmed = await showConfirm(msg); — compatible con try/catch explícito.
+ */
+export async function auditoriaResetear() {
     const isAdmin = state.userRole === 'admin';
 
     if (!isAdmin && !navigator.onLine) {
@@ -669,80 +677,84 @@ export function auditoriaResetear() {
         ? '⚠️ INICIAR NUEVO CICLO DE INVENTARIO\n\nEsto borrará TODOS los conteos actuales de TODOS los usuarios en las tres áreas.\n\nSe notificará a los bartenders automáticamente.\n\n¿Confirmar?'
         : '⚠️ ¿Resetear tu conteo actual?\n\nSe borrarán los conteos no finalizados de este dispositivo.';
 
-    showConfirm(msg, async () => {
-        if (isAdmin) {
-            // ── Reset completo ──────────────────────────────────────
-            state.auditoriaStatus           = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
-            state.auditoriaConteo           = {};
-            state.auditoriaConteoPorUsuario = {};
-            state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
-            state.inventarioConteo          = {};
-            state.auditoriaView             = 'selection';
-            state.auditoriaAreaActiva       = null;
-            state.isAuditoriaMode           = false;
-            saveToLocalStorage();
+    const confirmed = await showConfirm(msg);
+    if (!confirmed) return;
 
-            showNotification('🔄 Nuevo ciclo iniciado');
+    if (isAdmin) {
+        // ── Reset completo ──────────────────────────────────────
+        state.auditoriaStatus           = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
+        state.auditoriaConteo           = {};
+        state.auditoriaConteoPorUsuario = {};
+        state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
+        state.inventarioConteo          = {};
+        state.auditoriaView             = 'selection';
+        state.auditoriaAreaActiva       = null;
+        state.isAuditoriaMode           = false;
+        saveToLocalStorage();
 
-            const { renderTab } = await import('./render.js');
-            renderTab();
+        showNotification('🔄 Nuevo ciclo iniciado');
 
-            // ── Sincronizar con Firestore ───────────────────────────
-            if (window._db && navigator.onLine) {
-                try {
-                    await resetConteoAtomicoEnFirestore();
-                    // Limpiar locks en Firestore
-                    const batch = window._db.batch();
-                    AREA_KEYS.forEach(area => {
-                        const ref = window._db
-                            .collection('inventarioApp')
-                            .doc(window.FIRESTORE_DOC_ID)
-                            .collection('conteoPorUsuario')
-                            .doc(area);
-                        batch.set(ref, { _finalizados: {} }, { merge: true });
-                    });
-                    await batch.commit();
-                    console.info('[Audit] ✓ Reset completo en Firestore.');
-                } catch (err) {
-                    console.warn('[Audit] Reset en Firestore falló:', err?.message);
-                }
+        const { renderTab } = await import('./render.js');
+        renderTab();
 
-                // Notificar a todos los usuarios (broadcast)
-                try {
-                    await import('./notificaciones.js').then(m => m.enviarNotificacion({
-                        tipo:        'sistema',
-                        mensaje:     '🔄 El administrador ha iniciado un nuevo ciclo de inventario. Se han reseteado todos los conteos.',
-                        usuarioId:   'broadcast',
-                        usuarioName: 'Sistema',
-                        datos:       { accion: 'nuevo_ciclo', ts: Date.now() },
-                    }));
-                } catch (e) {}
-            }
-        } else {
-            // Usuario: solo limpia su conteo local no finalizado
-            const userId = _getCurrentUserId();
-            AREA_KEYS.forEach(area => {
-                const lock = state.conteoFinalizadoPorUsuario?.[area]?.[userId];
-                if (lock?.finalizado) return; // No tocar lo ya finalizado
-
-                // Limpiar solo las entradas no finalizadas
-                state.products.forEach(p => {
-                    if (state.auditoriaConteo[p.id]?.[area]) {
-                        delete state.auditoriaConteo[p.id][area];
-                    }
+        // ── Sincronizar con Firestore ───────────────────────────
+        if (window._db && navigator.onLine) {
+            try {
+                await resetConteoAtomicoEnFirestore();
+                // Limpiar locks en Firestore
+                const batch = window._db.batch();
+                AREA_KEYS.forEach(area => {
+                    const ref = window._db
+                        .collection('inventarioApp')
+                        .doc(window.FIRESTORE_DOC_ID)
+                        .collection('conteoPorUsuario')
+                        .doc(area);
+                    batch.set(ref, { _finalizados: {} }, { merge: true });
                 });
-            });
+                await batch.commit();
+                console.info('[Audit] ✓ Reset completo en Firestore.');
+            } catch (err) {
+                console.warn('[Audit] Reset en Firestore falló:', err?.message);
+                showNotification('⚠️ Reset guardado localmente — error al sincronizar con la nube');
+            }
 
-            state.auditoriaView       = 'selection';
-            state.auditoriaAreaActiva = null;
-            state.isAuditoriaMode     = false;
-            saveToLocalStorage();
-
-            showNotification('🔄 Conteo local reseteado');
-            const { renderTab } = await import('./render.js');
-            renderTab();
+            // Notificar a todos los usuarios (broadcast)
+            try {
+                await import('./notificaciones.js').then(m => m.enviarNotificacion({
+                    tipo:        'sistema',
+                    mensaje:     '🔄 El administrador ha iniciado un nuevo ciclo de inventario. Se han reseteado todos los conteos.',
+                    usuarioId:   'broadcast',
+                    usuarioName: 'Sistema',
+                    datos:       { accion: 'nuevo_ciclo', ts: Date.now() },
+                }));
+            } catch (e) {
+                console.warn('[Audit] Notificación broadcast falló:', e?.message);
+            }
         }
-    });
+    } else {
+        // Usuario: solo limpia su conteo local no finalizado
+        const userId = _getCurrentUserId();
+        AREA_KEYS.forEach(area => {
+            const lock = state.conteoFinalizadoPorUsuario?.[area]?.[userId];
+            if (lock?.finalizado) return; // No tocar lo ya finalizado
+
+            // Limpiar solo las entradas no finalizadas
+            state.products.forEach(p => {
+                if (state.auditoriaConteo[p.id]?.[area]) {
+                    delete state.auditoriaConteo[p.id][area];
+                }
+            });
+        });
+
+        state.auditoriaView       = 'selection';
+        state.auditoriaAreaActiva = null;
+        state.isAuditoriaMode     = false;
+        saveToLocalStorage();
+
+        showNotification('🔄 Conteo local reseteado');
+        const { renderTab } = await import('./render.js');
+        renderTab();
+    }
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -773,7 +785,47 @@ export function applyLockStatusFromSnapshot(area, docData) {
     saveToLocalStorage();
 }
 
-// ── Bindings globales ─────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+//  RESET REMOTO DESDE OTRO DISPOSITIVO
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * applyRemoteReset()
+ *
+ * FIX BUG-1 (CRÍTICO): Esta función faltaba completamente en audit.js.
+ * sync.js la invocaba al detectar un nuevo _resetCicloTs en Firestore:
+ *   import('./audit.js').then(m => {
+ *     if (typeof m.applyRemoteReset === 'function') m.applyRemoteReset();
+ *   })
+ * Sin esta función, cuando el admin iniciaba un nuevo ciclo desde otro
+ * dispositivo, los bartenders NO recibían el reset → seguían viendo
+ * los conteos del ciclo anterior y no podían empezar un conteo nuevo.
+ *
+ * Aplica el reset iniciado por el admin en otro dispositivo.
+ * Solo limpia el estado LOCAL; no escribe en Firestore (el admin ya lo hizo).
+ * El admin no necesita este reset (fue quien lo inició).
+ */
+export function applyRemoteReset() {
+    // Admin no necesita reset — él fue quien lo inició desde su dispositivo
+    if (state.userRole === 'admin') return;
+
+    console.info('[Audit] Aplicando reset remoto iniciado por el admin…');
+
+    state.auditoriaStatus            = { almacen: 'pendiente', barra1: 'pendiente', barra2: 'pendiente' };
+    state.auditoriaConteo            = {};
+    state.auditoriaConteoPorUsuario  = {};
+    state.conteoFinalizadoPorUsuario = { almacen: {}, barra1: {}, barra2: {} };
+    state.inventarioConteo           = {};
+    state.auditoriaView              = 'selection';
+    state.auditoriaAreaActiva        = null;
+    state.isAuditoriaMode            = false;
+
+    import('./storage.js').then(m => m.saveToLocalStorage()).catch(() => {});
+    import('./render.js').then(m => m.renderTab()).catch(() => {});
+
+    showNotification('🔄 El admin inició un nuevo ciclo — conteos reseteados');
+    console.info('[Audit] ✓ Reset remoto aplicado.');
+}
 window.auditSaveName             = auditSaveName;
 window.toggleAuditRename         = toggleAuditRename;
 window.auditoriaEntrarArea       = auditoriaEntrarArea;

@@ -1,5 +1,5 @@
 /**
- * js/render.js — Motor de renderizado de tabs (SPA sin framework).
+ * js/render.js — v2.1 Motor de renderizado de tabs (SPA sin framework).
  * Genera HTML como strings y lo inyecta en #tabContent.
  * v2.0 — Midnight Pro Design System
  */
@@ -566,7 +566,9 @@ function renderAuditoriaSeleccion() {
   html += renderAuditComparePanel();
 
   html += '<div class="flex flex-col gap-3 mb-4">';
-  ['almacen', 'barra1', 'barra2'].forEach(area => {
+  // FIX BUG-4: reemplazado array literal ['almacen','barra1','barra2'] por AREA_KEYS
+  // para que sea consistente con el resto del código y no desincronizarse si las áreas cambian.
+  AREA_KEYS.forEach(area => {
     const isCompleta = state.auditoriaStatus[area] === 'completada';
     html += `<div class="audit-area-card${isCompleta ? ' completada' : ''}"
       onclick="window.auditoriaEntrarArea('${area}')"

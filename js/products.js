@@ -1,5 +1,5 @@
 /**
- * js/products.js — v2.4
+ * js/products.js — v2.5
  * ══════════════════════════════════════════════════════════════
  * FIX BUG-6: ajustarProducto() llamaba enviarNotificacionAjuste()
  *   que NO existe en notificaciones.js.
@@ -441,6 +441,18 @@ export function importFullData(event) {
       if (data.auditoriaConteo)                  state.auditoriaConteo           = data.auditoriaConteo;
       if (data.auditoriaStatus)                  state.auditoriaStatus           = data.auditoriaStatus;
       if (data.auditoriaConteoPorUsuario)        state.auditoriaConteoPorUsuario = data.auditoriaConteoPorUsuario;
+      // FIX BUG-3: faltaba restaurar conteoFinalizadoPorUsuario.
+      // exportFullData() lo exporta, pero importFullData() lo ignoraba.
+      // Consecuencia: tras restaurar un backup, el estado de locks por usuario
+      // se perdía → los bartenders que ya habían finalizado aparecían desbloqueados
+      // y el admin no podía ver correctamente el estado del ciclo restaurado.
+      if (data.conteoFinalizadoPorUsuario && typeof data.conteoFinalizadoPorUsuario === 'object') {
+        state.conteoFinalizadoPorUsuario = {
+          almacen: data.conteoFinalizadoPorUsuario.almacen || {},
+          barra1:  data.conteoFinalizadoPorUsuario.barra1  || {},
+          barra2:  data.conteoFinalizadoPorUsuario.barra2  || {},
+        };
+      }
       if (data.ajustes)                          state.ajustes                   = data.ajustes;
       syncStockByAreaFromConteo();
       state.activeTab = 'inicio'; state.selectedGroup = 'Todos'; state.searchTerm = '';
