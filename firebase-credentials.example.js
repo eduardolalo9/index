@@ -17,7 +17,8 @@
  */
 
 window.FIREBASE_CREDENTIALS = {
- apiKey: "AIzaSyDugu23uEgacqMUTsoBF8i7xfyDIDbiv0M",
+ const firebaseConfig = {
+  apiKey: "AIzaSyDugu23uEgacqMUTsoBF8i7xfyDIDbiv0M",
   authDomain: "bar-inventario-1109e.firebaseapp.com",
   databaseURL: "https://bar-inventario-1109e-default-rtdb.firebaseio.com",
   projectId: "bar-inventario-1109e",
