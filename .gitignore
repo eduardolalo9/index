@@ -1,0 +1,45 @@
+# =========================
+# 🔒 Archivos sensibles
+# =========================
+firebase-credentials.js
+.env
+
+# =========================
+# 📦 Dependencias y builds
+# =========================
+node_modules/
+dist/
+build/
+.cache/
+.tmp/
+
+# =========================
+# 🛠️ Configuración local
+# =========================
+.vscode/
+.idea/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# =========================
+# 📱 PWA assets
+# =========================
+icons/
+*.png
+*.ico
+
+# =========================
+# 🧪 Carpetas de pruebas / backups
+# =========================
+APP*/
+CLAUDE*/
+PROYECTO GESTOR DE INVENTARIO*/
+PROYECTO UNIFICADO FINAL INVENTARY*/
+actualizado*/
+
+# =========================
+# 🚫 Archivos duplicados o innecesarios
+# =========================
+firestore_indexes.json   # Firebase ignora este, solo usa firestore.indexes.json
